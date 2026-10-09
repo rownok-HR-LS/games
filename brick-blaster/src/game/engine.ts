@@ -5,6 +5,7 @@ import { POWER_ICONS, type Tone } from "./icons";
 import { TRACKS } from "./music";
 import { BrickSkins, LEVEL_THEMES, SKIN_PAD } from "./brickskins";
 import { drawPaddle } from "./paddle";
+import { drawBall } from "./balls";
 
 // Logical playfield; the canvas scales it to fit.
 export const W = 800;
@@ -633,7 +634,7 @@ export class Game {
     ctx.shadowBlur = 0;
 
     this.drawPaddle(ctx);
-    for (const ball of this.balls) this.drawBall(ctx, ball);
+    this.balls.forEach((ball, i) => this.drawBall(ctx, ball, i));
 
     for (const q of this.particles) {
       const a = q.life / q.max;
@@ -814,28 +815,21 @@ export class Game {
   }
 
 
-  private drawBall(ctx: CanvasRenderingContext2D, ball: Ball) {
-    const fire = Boolean(this.timers.fire);
-    // Drawn a little larger on small screens so it stays easy to track.
-    const r = BALL_R * Math.min(this.boost, 1.45);
-    ball.trail.forEach((t, i) => {
-      const a = (i + 1) / ball.trail.length;
-      ctx.globalAlpha = a * 0.35;
-      ctx.fillStyle = fire ? "#ff8a3d" : "#9fb6ff";
-      ctx.beginPath();
-      ctx.arc(t.x, t.y, r * a * (fire ? 1.3 : 0.9), 0, Math.PI * 2);
-      ctx.fill();
+  private drawBall(ctx: CanvasRenderingContext2D, ball: Ball, i: number) {
+    // Themed per level (see balls.ts); slightly larger than the physics radius so details read,
+    // and larger again on small screens so it stays easy to track.
+    drawBall(ctx, LEVEL_THEMES[this.level % LEVEL_THEMES.length], {
+      x: ball.x,
+      y: ball.y,
+      vx: ball.vx,
+      vy: ball.vy,
+      r: BALL_R * 1.2 * Math.min(this.boost, 1.4),
+      trail: ball.trail,
+      time: this.time,
+      fire: Boolean(this.timers.fire),
+      reduced: this.reduced,
+      seed: i * 1.37,
     });
-    ctx.globalAlpha = 1;
-    const g = ctx.createRadialGradient(ball.x - r * 0.3, ball.y - r * 0.3, 1, ball.x, ball.y, r);
-    g.addColorStop(0, "#ffffff");
-    g.addColorStop(1, fire ? "#ff6a1a" : "#b9c8ff");
-    ctx.shadowColor = fire ? "#ff6a1a" : "#ffffff";
-    ctx.shadowBlur = fire ? 20 : 12;
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(ball.x, ball.y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
   }
+
 }
