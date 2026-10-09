@@ -7,6 +7,8 @@ import { defineConfig } from "vite";
 export default defineConfig({
   base: "/games/",
   plugins: [react()],
+  // Stamped by scripts/deploy.mjs; pages compare it with /games/version.json to auto-refresh stale copies.
+  define: { __BUILD_ID__: JSON.stringify(process.env.BUILD_ID ?? "dev") },
   build: {
     rollupOptions: {
       input: {

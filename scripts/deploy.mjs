@@ -5,7 +5,7 @@ import { rmSync, writeFileSync } from "node:fs";
 
 const DIR = "dist";
 
-const run = (cmd, cwd) => execSync(cmd, { stdio: "inherit", cwd });
+const run = (cmd, cwd, env) => execSync(cmd, { stdio: "inherit", cwd, env: { ...process.env, ...env } });
 const read = (cmd) => execSync(cmd).toString().trim();
 
 const remote = read("git remote get-url origin");
@@ -14,7 +14,9 @@ const email = read("git config user.email");
 const commit = read("git rev-parse --short HEAD");
 
 rmSync(DIR, { recursive: true, force: true });
-run("npm run build");
+run("npm run build", undefined, { BUILD_ID: commit });
+// Pages compare their built-in id with this file to reload themselves after a deploy.
+writeFileSync(`${DIR}/version.json`, JSON.stringify({ build: commit }));
 // Serve files as-is (no Jekyll processing).
 writeFileSync(`${DIR}/.nojekyll`, "");
 

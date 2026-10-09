@@ -19,7 +19,8 @@ Then open http://localhost:5173/games/.
 
 1. Make a folder `<game>/` with an `index.html` and its code in `<game>/src/`.
 2. Add `<game>/index.html` to `build.rollupOptions.input` in `vite.config.ts`.
-3. Add a card for it on the hub page (`index.html`) and a row to the table above.
+3. Call `reloadIfStale()` from `shared/autoUpdate.ts` at the top of its `main.tsx`, so players never get a stale copy after a deploy.
+4. Add a card for it on the hub page (`index.html`) and a row to the table above.
 
 ## Deploy
 

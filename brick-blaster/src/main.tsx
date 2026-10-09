@@ -2,6 +2,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import BrickBlaster from "./game/BrickBlaster";
 import "./page.css";
+import { reloadIfStale } from "../../shared/autoUpdate";
+
+reloadIfStale();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
