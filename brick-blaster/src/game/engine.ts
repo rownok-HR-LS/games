@@ -3,6 +3,7 @@ import type { Sound } from "./sound";
 import { Backdrop } from "./backdrop";
 import { POWER_ICONS, type Tone } from "./icons";
 import { TRACKS } from "./music";
+import { BrickSkins, LEVEL_THEMES, SKIN_PAD } from "./brickskins";
 
 // Logical playfield; the canvas scales it to fit.
 export const W = 800;
@@ -20,7 +21,7 @@ const STEP = 1 / 120;
 const MAX_BALLS = 12;
 
 type BrickType = "normal" | "strong" | "metal" | "explosive" | "mystery";
-type Brick = { x: number; y: number; w: number; h: number; type: BrickType; hp: number; maxHp: number; color: string; row: number; alive: boolean; flash: number };
+type Brick = { x: number; y: number; w: number; h: number; type: BrickType; hp: number; maxHp: number; color: string; row: number; alive: boolean; flash: number; variant: number };
 type Ball = { x: number; y: number; vx: number; vy: number; stuck: boolean; offset: number; trail: { x: number; y: number }[] };
 type Drop = { x: number; y: number; kind: PowerKind; spin: number };
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number; color: string; kind: "chip" | "ring" | "spark" };
@@ -106,6 +107,8 @@ export class Game {
   /** On-screen CSS pixels per logical unit; small screens get a bigger ball and text. */
   viewScale = 1;
   private backdrop = new Backdrop(W);
+  private skins = new BrickSkins();
+  private renderScale = 1;
   private icons: Partial<Record<PowerKind, { path: Path2D; tone: Tone }[]>> = {};
 
   private sound: Sound;
@@ -169,8 +172,8 @@ export class Game {
         if (ch === ".") return;
         const type: BrickType = ch === "M" ? "metal" : ch === "X" ? "explosive" : ch === "?" ? "mystery" : ch === "2" || ch === "3" ? "strong" : "normal";
         const hp = type === "strong" ? Number(ch) : 1;
-        const color = type === "metal" ? "#a9adb8" : type === "explosive" ? "#e0452f" : type === "mystery" ? "#d6a72c" : type === "strong" ? (hp === 3 ? "#5b5f73" : "#7a7f96") : PALETTE[ch] ?? "#d9d9de";
-        this.bricks.push({ x: SIDE + col * (BRICK_W + GAP), y: TOP + row * (BRICK_H + GAP), w: BRICK_W, h: BRICK_H, type, hp, maxHp: hp, color, row, alive: true, flash: 0 });
+        const color = type === "metal" ? "#a9adb8" : type === "explosive" ? "#e0452f" : type === "mystery" ? "#d6a72c" : type === "strong" ? (hp === 3 ? "#9aa3b8" : "#c3c8d4") : PALETTE[ch] ?? "#d9d9de";
+        this.bricks.push({ x: SIDE + col * (BRICK_W + GAP), y: TOP + row * (BRICK_H + GAP), w: BRICK_W, h: BRICK_H, type, hp, maxHp: hp, color, row, alive: true, flash: 0, variant: (col * 7 + row * 3) % 4 });
       });
     });
     this.resetRound();
@@ -573,6 +576,7 @@ export class Game {
 
   // ── Rendering ─────────────────────────────────────────────────────────────────────
   render(ctx: CanvasRenderingContext2D, scale: number) {
+    this.renderScale = scale;
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     this.backdrop.draw(ctx, this.h, scale, this.time, this.reduced);
 
@@ -656,80 +660,76 @@ export class Game {
   }
 
   private drawBrick(ctx: CanvasRenderingContext2D, b: Brick) {
-    const g = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
-    if (b.type === "metal") {
-      g.addColorStop(0, "#f2f4f8");
-      g.addColorStop(0.45, "#a9adb8");
-      g.addColorStop(0.55, "#8d919e");
-      g.addColorStop(1, "#5f6370");
-    } else {
-      g.addColorStop(0, mix(b.color, 255, 0.45));
-      g.addColorStop(0.5, b.color);
-      g.addColorStop(1, mix(b.color, 0, 0.45));
-    }
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.roundRect(b.x, b.y, b.w, b.h, 4);
-    ctx.fill();
-    // Bevel: bright top edge, dark bottom edge.
-    ctx.fillStyle = "rgba(255,255,255,0.45)";
-    ctx.fillRect(b.x + 3, b.y + 2, b.w - 6, 2);
-    ctx.fillStyle = "rgba(0,0,0,0.25)";
-    ctx.fillRect(b.x + 3, b.y + b.h - 3, b.w - 6, 2);
+    // Level material (cached per theme/type/colour), matched to the level's soundtrack.
+    const theme = LEVEL_THEMES[this.level % LEVEL_THEMES.length];
+    const img = this.skins.get(theme, b.type, b.color, b.variant, b.w, b.h, this.renderScale);
+    ctx.drawImage(img, b.x - SKIN_PAD, b.y - SKIN_PAD, b.w + SKIN_PAD * 2, b.h + SKIN_PAD * 2);
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
 
-    if (b.type === "strong") {
-      ctx.fillStyle = "rgba(255,255,255,0.6)";
-      for (const rx of [6, b.w - 6]) {
-        ctx.beginPath();
-        ctx.arc(b.x + rx, b.y + b.h / 2, 1.6, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      if (b.hp < b.maxHp) {
-        ctx.strokeStyle = "rgba(0,0,0,0.55)";
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.moveTo(b.x + b.w * 0.3, b.y + 2);
-        ctx.lineTo(b.x + b.w * 0.42, b.y + b.h * 0.55);
-        ctx.lineTo(b.x + b.w * 0.36, b.y + b.h - 2);
-        if (b.maxHp - b.hp > 1) {
-          ctx.moveTo(b.x + b.w * 0.42, b.y + b.h * 0.55);
-          ctx.lineTo(b.x + b.w * 0.7, b.y + b.h * 0.4);
-          ctx.lineTo(b.x + b.w * 0.82, b.y + 2);
-        }
-        ctx.stroke();
-      }
-    }
-    if (b.type === "metal") {
-      ctx.fillStyle = "rgba(255,255,255,0.22)";
+    // Damage: cracks spread as a strong brick weakens.
+    if (b.type === "strong" && b.hp < b.maxHp) {
+      ctx.strokeStyle = "rgba(10,6,6,0.85)";
+      ctx.lineWidth = 1.3;
       ctx.beginPath();
-      ctx.moveTo(b.x + b.w * 0.25, b.y);
-      ctx.lineTo(b.x + b.w * 0.45, b.y);
-      ctx.lineTo(b.x + b.w * 0.3, b.y + b.h);
-      ctx.lineTo(b.x + b.w * 0.1, b.y + b.h);
-      ctx.fill();
-    }
-    if (b.type === "explosive" || b.type === "mystery") {
-      ctx.font = `800 ${b.type === "mystery" ? 15 : 13}px system-ui, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = b.type === "mystery" ? `rgba(255,255,255,${0.75 + 0.25 * Math.sin(this.time * 5)})` : "#fff3c4";
-      ctx.fillText(b.type === "mystery" ? "?" : "✸", b.x + b.w / 2, b.y + b.h / 2 + 1);
-      ctx.textBaseline = "alphabetic";
-    }
-    if (b.type === "explosive") {
-      ctx.strokeStyle = `rgba(255,200,80,${0.35 + 0.3 * Math.sin(this.time * 6)})`;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, 4);
+      ctx.moveTo(b.x + b.w * 0.3, b.y + 1);
+      ctx.lineTo(b.x + b.w * 0.42, b.y + b.h * 0.55);
+      ctx.lineTo(b.x + b.w * 0.36, b.y + b.h - 1);
+      ctx.moveTo(b.x + b.w * 0.42, b.y + b.h * 0.55);
+      ctx.lineTo(b.x + b.w * 0.55, b.y + b.h * 0.7);
+      if (b.maxHp - b.hp > 1) {
+        ctx.moveTo(b.x + b.w * 0.42, b.y + b.h * 0.55);
+        ctx.lineTo(b.x + b.w * 0.7, b.y + b.h * 0.4);
+        ctx.lineTo(b.x + b.w * 0.82, b.y + 1);
+        ctx.moveTo(b.x + b.w * 0.7, b.y + b.h * 0.4);
+        ctx.lineTo(b.x + b.w * 0.74, b.y + b.h - 1);
+      }
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(255,255,255,0.25)";
+      ctx.lineWidth = 0.5;
       ctx.stroke();
     }
-    if (b.flash > 0) {
-      ctx.fillStyle = `rgba(255,255,255,${b.flash * 0.7})`;
+
+    // Explosive: pulsing molten core.
+    if (b.type === "explosive") {
+      const p = 0.5 + 0.5 * Math.sin(this.time * 6 + b.x * 0.05);
+      const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, 7);
+      core.addColorStop(0, "#fff3c4");
+      core.addColorStop(0.45, `rgba(255,150,40,${0.75 + 0.25 * p})`);
+      core.addColorStop(1, "rgba(200,30,10,0)");
+      ctx.fillStyle = core;
       ctx.beginPath();
-      ctx.roundRect(b.x, b.y, b.w, b.h, 4);
+      ctx.arc(cx, cy, 6 + p * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255,190,80,${0.25 + 0.35 * p})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, 3);
+      ctx.stroke();
+    }
+
+    // Mystery: glowing gold sigil.
+    if (b.type === "mystery") {
+      const p = 0.5 + 0.5 * Math.sin(this.time * 4 + b.x * 0.03);
+      ctx.save();
+      ctx.shadowColor = "#ffcf5a";
+      ctx.shadowBlur = 6 + p * 6;
+      ctx.font = "900 13px Georgia, 'Times New Roman', serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = `rgba(255,226,140,${0.8 + 0.2 * p})`;
+      ctx.fillText("?", cx, cy + 0.5);
+      ctx.restore();
+    }
+
+    if (b.flash > 0) {
+      ctx.fillStyle = `rgba(255,255,255,${b.flash * 0.6})`;
+      ctx.beginPath();
+      ctx.roundRect(b.x, b.y, b.w, b.h, 3);
       ctx.fill();
     }
   }
+
 
   private drawDrop(ctx: CanvasRenderingContext2D, d: Drop) {
     const info = POWERS[d.kind];
