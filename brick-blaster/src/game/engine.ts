@@ -6,6 +6,7 @@ import { TRACKS } from "./music";
 import { BrickSkins, LEVEL_THEMES, SKIN_PAD } from "./brickskins";
 import { drawPaddle } from "./paddle";
 import { drawBall } from "./balls";
+import { LEVEL_STYLES } from "./levelstyle";
 
 // Logical playfield; the canvas scales it to fit.
 export const W = 800;
@@ -177,7 +178,7 @@ export class Game {
         if (ch === ".") return;
         const type: BrickType = ch === "M" ? "metal" : ch === "X" ? "explosive" : ch === "?" ? "mystery" : ch === "2" || ch === "3" ? "strong" : "normal";
         const hp = type === "strong" ? Number(ch) : 1;
-        const color = type === "metal" ? "#a9adb8" : type === "explosive" ? "#e0452f" : type === "mystery" ? "#d6a72c" : type === "strong" ? (hp === 3 ? "#9aa3b8" : "#c3c8d4") : PALETTE[ch] ?? "#d9d9de";
+        const color = type === "metal" ? "#a9adb8" : type === "explosive" ? "#e0452f" : type === "mystery" ? "#d6a72c" : type === "strong" ? (hp === 3 ? "#9aa3b8" : "#c3c8d4") : LEVEL_STYLES[n % LEVEL_STYLES.length].palette[ch] ?? PALETTE[ch] ?? "#d9d9de";
         this.bricks.push({ x: SIDE + col * (BRICK_W + GAP), y: TOP + row * (BRICK_H + GAP), w: BRICK_W, h: BRICK_H, type, hp, maxHp: hp, color, row, alive: true, flash: 0, variant: (col * 7 + row * 3) % 4 });
       });
     });
@@ -605,7 +606,7 @@ export class Game {
   render(ctx: CanvasRenderingContext2D, scale: number) {
     this.renderScale = scale;
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    this.backdrop.draw(ctx, this.h, scale, this.time, this.reduced);
+    this.backdrop.draw(ctx, this.h, scale, this.time, this.reduced, LEVEL_STYLES[this.level % LEVEL_STYLES.length]);
 
     ctx.save();
     if (this.shake > 0) ctx.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);

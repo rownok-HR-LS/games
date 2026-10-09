@@ -107,71 +107,62 @@ function rune(g: Ctx, cx: number, cy: number, size: number, idx: number) {
 const MATERIALS: Record<Theme, (g: Ctx, w: number, h: number, c: string, rnd: () => number, v: number) => void> = {
   // Molten basalt: dark rock, magma glowing through branching cracks.
   magma(g, w, h, c, rnd) {
-    // Cooled basalt crust split by wandering molten seams.
-    const glow = shade(blend(c, "#ff6a1f", 0.3), 0.15);
-    const rock = g.createLinearGradient(0, 0, 0, h);
-    rock.addColorStop(0, "#4a302a");
-    rock.addColorStop(0.5, "#2a1916");
-    rock.addColorStop(1, "#140a08");
-    g.fillStyle = rock;
+    // Molten slab: cooled basalt crust along the top and bottom, a jagged seam of magma
+    // glowing in the row's heat colour through the middle.
+    const face = g.createLinearGradient(0, 0, 0, h);
+    face.addColorStop(0, c);
+    face.addColorStop(0.42, shade(c, 0.12));
+    face.addColorStop(0.5, shade(c, 0.32));
+    face.addColorStop(0.58, shade(c, 0.12));
+    face.addColorStop(1, c);
+    g.fillStyle = face;
     rr(g, 0, 0, w, h, 3);
     g.fill();
     g.save();
     rr(g, 0, 0, w, h, 3);
     g.clip();
-    // Plate shading: random lighter/darker patches so the crust reads as separate slabs.
-    for (let k = 0; k < 5; k++) {
-      g.fillStyle = rnd() < 0.5 ? "rgba(255,200,170,0.06)" : "rgba(0,0,0,0.22)";
+    const crustBand = (top: boolean) => {
+      const base = top ? h * (0.34 + rnd() * 0.08) : h * (0.66 - rnd() * 0.08);
       g.beginPath();
-      g.ellipse(rnd() * w, rnd() * h, 6 + rnd() * 12, 4 + rnd() * 6, rnd() * 3, 0, Math.PI * 2);
+      g.moveTo(-1, top ? -1 : h + 1);
+      let x = -1;
+      g.lineTo(x, base);
+      while (x < w + 1) {
+        x += 3 + rnd() * 5;
+        g.lineTo(x, base + (rnd() - 0.5) * 5 + (top ? -1 : 1));
+      }
+      g.lineTo(w + 1, top ? -1 : h + 1);
+      g.closePath();
+      const crust = g.createLinearGradient(0, top ? 0 : h, 0, base);
+      crust.addColorStop(0, "#3e241e");
+      crust.addColorStop(0.7, "#1e0d09");
+      crust.addColorStop(1, shade(c, -0.55));
+      g.fillStyle = crust;
       g.fill();
-    }
-    speckle(g, w, h, rnd, 40, "rgba(255,190,150,0.12)", "rgba(0,0,0,0.4)");
-    // Seams: one long horizontal river and two or three cross seams.
-    const seams: [number, number][][] = [];
-    const wander = (x0: number, y0: number, x1: number, y1: number, steps: number, amp: number) => {
-      const pts: [number, number][] = [];
-      for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const edge = i === 0 || i === steps ? 0 : 1;
-        pts.push([x0 + (x1 - x0) * t + (rnd() - 0.5) * amp * edge, y0 + (y1 - y0) * t + (rnd() - 0.5) * amp * edge]);
-      }
-      return pts;
+      g.strokeStyle = shade(c, 0.35, 0.9);
+      g.lineWidth = 0.9;
+      g.stroke();
     };
-    const ym = h * (0.38 + rnd() * 0.3);
-    seams.push(wander(-2, ym + (rnd() - 0.5) * 6, w + 2, ym + (rnd() - 0.5) * 6, 7, 4));
-    const cross = 2 + Math.floor(rnd() * 2);
-    for (let k = 0; k < cross; k++) {
-      const x = w * ((k + 0.5) / cross) + (rnd() - 0.5) * 10;
-      const fromTop = rnd() < 0.5;
-      seams.push(wander(x + (rnd() - 0.5) * 6, fromTop ? -2 : h + 2, x + (rnd() - 0.5) * 8, ym, 3, 3));
+    crustBand(true);
+    crustBand(false);
+    // A couple of hairline cracks in the crust that glow faintly.
+    g.strokeStyle = shade(c, 0.1, 0.55);
+    g.lineWidth = 0.6;
+    for (let k = 0; k < 2; k++) {
+      const x0 = 6 + rnd() * (w - 12);
+      const top = rnd() < 0.5;
+      g.beginPath();
+      g.moveTo(x0, top ? 0 : h);
+      g.lineTo(x0 + (rnd() - 0.5) * 6, top ? h * 0.3 : h * 0.7);
+      g.stroke();
     }
-    g.lineCap = "round";
-    g.lineJoin = "round";
-    for (const [width, color, blur] of [
-      [3.4, shade(glow, -0.15, 0.9), 7],
-      [1.8, glow, 3],
-      [0.7, shade(blend(c, "#ffe2a0", 0.6), 0.5), 0],
-    ] as const) {
-      g.strokeStyle = color;
-      g.lineWidth = width;
-      g.shadowColor = glow;
-      g.shadowBlur = blur;
-      for (const pts of seams) {
-        g.beginPath();
-        pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
-        g.stroke();
-      }
-    }
-    g.shadowBlur = 0;
-    // Heat haze along the bottom edge.
-    const heat = g.createLinearGradient(0, h, 0, h * 0.55);
-    heat.addColorStop(0, shade(glow, 0, 0.35));
-    heat.addColorStop(1, shade(glow, 0, 0));
-    g.fillStyle = heat;
-    g.fillRect(0, 0, w, h);
+    speckle(g, w, h, rnd, 14, "rgba(255,200,160,0.10)", "rgba(0,0,0,0.25)");
     g.restore();
-    bevel(g, w, h, 3, 0.2, 0.45);
+    g.strokeStyle = "rgba(20,6,4,0.9)";
+    g.lineWidth = 1.4;
+    rr(g, 0.7, 0.7, w - 1.4, h - 1.4, 3);
+    g.stroke();
+    bevel(g, w, h, 3, 0.25, 0.3);
   },
 
   // Gothic stained glass: jewel panes in a lead frame with a pointed arch.
