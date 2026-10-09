@@ -11,6 +11,8 @@ export type BallLook = {
   trail: { x: number; y: number }[];
   time: number;
   fire: boolean;
+  /** Fast-ball (bad) power: red afterimages, speed lines and a shock bow. */
+  fast: boolean;
   reduced: boolean;
   /** Stable per-ball seed so multi-balls don't spin in lockstep. */
   seed: number;
@@ -454,9 +456,50 @@ const TRAILS: Record<Theme, TrailStyle> = {
 
 const FIRE_TRAIL: TrailStyle = { kind: "flame", inner: "rgba(255,230,140,ALPHA)", outer: "rgba(255,90,20,ALPHA)" };
 
+function speedFx(g: G, b: BallLook) {
+  const sp = Math.hypot(b.vx, b.vy) || 1;
+  const dx = b.vx / sp;
+  const dy = b.vy / sp;
+  const r = b.r;
+  // Red afterimages strung out behind the ball.
+  const n = b.trail.length;
+  for (let k = 1; k <= 3; k++) {
+    const t = b.trail[n - 1 - k * 3];
+    if (!t) break;
+    const a = 0.45 - k * 0.12;
+    const gh = g.createRadialGradient(t.x, t.y, 0, t.x, t.y, r * 1.1);
+    gh.addColorStop(0, `rgba(255,120,100,${a})`);
+    gh.addColorStop(1, "rgba(255,30,20,0)");
+    g.fillStyle = gh;
+    disc(g, t.x, t.y, r * 1.1);
+    g.fill();
+  }
+  // Speed lines.
+  g.strokeStyle = "rgba(255,230,220,0.55)";
+  g.lineWidth = Math.max(0.6, r * 0.12);
+  g.lineCap = "round";
+  for (const off of [-0.9, -0.35, 0.35, 0.9]) {
+    const ox = b.x - dy * r * off;
+    const oy = b.y + dx * r * off;
+    const len = r * (3 + 1.5 * Math.abs(Math.sin(b.time * 30 + off * 7)));
+    g.beginPath();
+    g.moveTo(ox - dx * r * 1.2, oy - dy * r * 1.2);
+    g.lineTo(ox - dx * (r * 1.2 + len), oy - dy * (r * 1.2 + len));
+    g.stroke();
+  }
+  // Shock bow ahead of the ball.
+  g.strokeStyle = "rgba(255,140,120,0.7)";
+  g.lineWidth = Math.max(0.8, r * 0.18);
+  const ang = Math.atan2(dy, dx);
+  g.beginPath();
+  g.arc(b.x, b.y, r * 1.45, ang - 1.1, ang + 1.1);
+  g.stroke();
+}
+
 export function drawBall(g: G, theme: Theme, b: BallLook) {
   g.save();
   drawTrail(g, b, b.fire ? FIRE_TRAIL : TRAILS[theme]);
+  if (b.fast) speedFx(g, b);
   body(g, theme, b);
   // Fireball power: flames wrap the ball, streaming away from its direction of travel.
   if (b.fire) {

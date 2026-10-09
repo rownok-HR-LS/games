@@ -24,10 +24,28 @@ const STEP = 1 / 120;
 const MAX_BALLS = 12;
 
 type BrickType = "normal" | "strong" | "metal" | "explosive" | "mystery";
-type Brick = { x: number; y: number; w: number; h: number; type: BrickType; hp: number; maxHp: number; color: string; row: number; alive: boolean; flash: number; variant: number };
+type Brick = { x: number; y: number; w: number; h: number; type: BrickType; hp: number; maxHp: number; color: string; row: number; alive: boolean; flash: number; variant: number; flashColor: string };
 type Ball = { x: number; y: number; vx: number; vy: number; stuck: boolean; offset: number; trail: { x: number; y: number }[] };
 type Drop = { x: number; y: number; kind: PowerKind; spin: number };
-type Particle = { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number; color: string; kind: "chip" | "ring" | "spark" };
+type Particle = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  max: number;
+  size: number;
+  color: string;
+  kind: "chip" | "ring" | "spark" | "ember" | "shard" | "burn" | "slice";
+  /** Optional extras for the power-up effects. */
+  w?: number;
+  h?: number;
+  rot?: number;
+  vr?: number;
+  grav?: number;
+};
+/** What hit a brick: decides the impact and destruction animation. */
+type Cause = "ball" | "fire" | "fast" | "laser" | "blast";
 type Popup = { x: number; y: number; text: string; life: number; color: string };
 
 export type PowerKind = "expand" | "shrink" | "multi" | "fire" | "laser" | "catch" | "slow" | "fast" | "life" | "shield";
@@ -179,7 +197,7 @@ export class Game {
         const type: BrickType = ch === "M" ? "metal" : ch === "X" ? "explosive" : ch === "?" ? "mystery" : ch === "2" || ch === "3" ? "strong" : "normal";
         const hp = type === "strong" ? Number(ch) : 1;
         const color = type === "metal" ? "#a9adb8" : type === "explosive" ? "#e0452f" : type === "mystery" ? "#d6a72c" : type === "strong" ? (hp === 3 ? "#9aa3b8" : "#c3c8d4") : LEVEL_STYLES[n % LEVEL_STYLES.length].palette[ch] ?? PALETTE[ch] ?? "#d9d9de";
-        this.bricks.push({ x: SIDE + col * (BRICK_W + GAP), y: TOP + row * (BRICK_H + GAP), w: BRICK_W, h: BRICK_H, type, hp, maxHp: hp, color, row, alive: true, flash: 0, variant: (col * 7 + row * 3) % 4 });
+        this.bricks.push({ x: SIDE + col * (BRICK_W + GAP), y: TOP + row * (BRICK_H + GAP), w: BRICK_W, h: BRICK_H, type, hp, maxHp: hp, color, row, alive: true, flash: 0, flashColor: "255,255,255", variant: (col * 7 + row * 3) % 4 });
       });
     });
     this.resetRound();
@@ -313,6 +331,7 @@ export class Game {
       // Never let the ball travel almost horizontally forever.
       if (Math.abs(ball.vy) < sp * 0.25) ball.vy = Math.sign(ball.vy || -1) * sp * 0.25;
       this.moveBall(ball, h);
+      if (this.timers.fire && Math.random() < (this.reduced ? 0.15 : 0.5)) this.ember(ball.x, ball.y);
       ball.trail.push({ x: ball.x, y: ball.y });
       if (ball.trail.length > 10) ball.trail.shift();
     }
@@ -332,13 +351,16 @@ export class Game {
       return !caught && d.y < this.h + 20;
     });
 
-    for (const bolt of this.bolts) bolt.y -= 900 * h;
+    for (const bolt of this.bolts) {
+      bolt.y -= 900 * h;
+      if (!this.reduced && Math.random() < 0.25)
+        this.particles.push({ x: bolt.x + (Math.random() - 0.5) * 3, y: bolt.y + 10, vx: (Math.random() - 0.5) * 60, vy: 40, life: 0.25, max: 0.25, size: 1.6, color: "#ffb8e6", kind: "spark" });
+    }
     this.bolts = this.bolts.filter((bolt) => {
       if (bolt.y < 0) return false;
       const hit = this.bricks.find((b) => b.alive && bolt.x >= b.x && bolt.x <= b.x + b.w && bolt.y >= b.y && bolt.y <= b.y + b.h);
       if (hit) {
-        this.hitBrick(hit);
-        this.spark(bolt.x, bolt.y, "#ff9ad5", 4);
+        this.hitBrick(hit, "laser", bolt.x, bolt.y);
       }
       return !hit;
     });
@@ -412,7 +434,7 @@ export class Game {
         const dy = ball.y - cy;
         if (dx * dx + dy * dy >= BALL_R * BALL_R) continue;
         if (this.timers.fire && b.type !== "metal") {
-          this.destroy(b);
+          this.destroy(b, "fire", cx, cy);
           continue;
         }
         // Reflect on the axis of contact and push the ball out of the brick.
@@ -423,16 +445,18 @@ export class Game {
           ball.vy = dy > 0 ? Math.abs(ball.vy) : dy < 0 ? -Math.abs(ball.vy) : -ball.vy;
           ball.y = cy + (dy !== 0 ? Math.sign(dy) : ball.vy > 0 ? 1 : -1) * BALL_R;
         }
-        this.hitBrick(b);
+        this.hitBrick(b, this.timers.fire ? "fire" : this.timers.fast ? "fast" : "ball", cx, cy);
         break;
       }
     }
   }
 
-  private hitBrick(b: Brick) {
+  private hitBrick(b: Brick, cause: Cause, hx: number, hy: number) {
     b.flash = 1;
+    b.flashColor = cause === "laser" ? "255,120,210" : cause === "fire" ? "255,170,60" : cause === "fast" ? "255,90,70" : "255,255,255";
     if (b.type === "metal") {
       this.sound.metal();
+      this.impactFx(cause, hx, hy, b);
       return;
     }
     b.hp--;
@@ -440,18 +464,20 @@ export class Game {
       this.score += 10;
       this.sound.crack();
       this.chips(b, 3);
+      this.impactFx(cause, hx, hy, b);
       return;
     }
-    this.destroy(b);
+    this.destroy(b, cause, hx, hy);
   }
 
-  private destroy(b: Brick) {
+  private destroy(b: Brick, cause: Cause = "ball", hx = b.x + b.w / 2, hy = b.y + b.h / 2) {
     if (!b.alive || b.type === "metal") return;
     b.alive = false;
+    this.destroyFx(b, cause, hx, hy);
     const pts = POINTS[b.type] * (b.type === "strong" ? b.maxHp : 1);
     this.score += pts;
     this.popups.push({ x: b.x + b.w / 2, y: b.y, text: `+${pts}`, life: 0.8, color: "#ffffff" });
-    this.chips(b, this.reduced ? 4 : 12);
+    if (cause === "ball" || cause === "blast") this.chips(b, this.reduced ? 4 : 12);
     this.sound.brick(b.row);
     if (b.type === "mystery" || Math.random() < 0.1) this.drops.push({ x: b.x + b.w / 2, y: b.y + b.h / 2, kind: randomPower(), spin: 0 });
     if (b.type === "explosive") this.explosions.push({ brick: b, at: this.levelTime + 0.06 });
@@ -472,7 +498,7 @@ export class Game {
           o.alive = false;
           this.score += POINTS.explosive;
           this.explosions.push({ brick: o, at: this.levelTime + 0.09 });
-        } else this.destroy(o);
+        } else this.destroy(o, "blast");
       }
     }
   }
@@ -576,6 +602,96 @@ export class Game {
     }
   }
 
+  private ember(x: number, y: number) {
+    this.particles.push({
+      x: x + (Math.random() - 0.5) * 6,
+      y: y + (Math.random() - 0.5) * 6,
+      vx: (Math.random() - 0.5) * 50,
+      vy: -30 - Math.random() * 60,
+      life: 0.6,
+      max: 0.6,
+      size: 1.4 + Math.random() * 2,
+      color: Math.random() < 0.5 ? "#ffd27a" : "#ff7a2a",
+      kind: "ember",
+      grav: -40,
+    });
+  }
+
+  /** A hit that doesn't destroy the brick (strong or metal). */
+  private impactFx(cause: Cause, x: number, y: number, b: Brick) {
+    const n = this.reduced ? 0.4 : 1;
+    if (cause === "fire") {
+      for (let i = 0; i < 10 * n; i++) this.ember(x, y);
+      this.particles.push({ x, y, vx: 0, vy: 0, life: 0.3, max: 0.3, size: 26, color: "#ff8a2a", kind: "ring" });
+    } else if (cause === "laser") {
+      this.spark(x, y, "#ff9ad5", Math.ceil(8 * n));
+      this.spark(x, y, "#ffffff", Math.ceil(3 * n));
+      this.particles.push({ x, y, vx: 0, vy: 0, life: 0.22, max: 0.22, size: 14, color: "#ff5ab8", kind: "ring" });
+    } else if (cause === "fast") {
+      this.particles.push({ x, y, vx: 0, vy: 0, life: 0.35, max: 0.35, size: 44, color: "#ffd0c0", kind: "ring" });
+      this.spark(x, y, "#ffffff", Math.ceil(6 * n));
+      if (!this.reduced) this.shake = Math.max(this.shake, 3);
+    } else if (b.type === "metal") this.spark(x, y, "#e8ecf4", Math.ceil(4 * n));
+  }
+
+  /** The brick's death animation, by what killed it. */
+  private destroyFx(b: Brick, cause: Cause, x: number, y: number) {
+    const n = this.reduced ? 0.4 : 1;
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    if (cause === "fire") {
+      // Burns away: a white-hot ghost of the brick rising into embers.
+      this.particles.push({ x: cx, y: cy, vx: 0, vy: -25, life: 0.5, max: 0.5, size: 0, color: b.color, kind: "burn", w: b.w, h: b.h });
+      for (let i = 0; i < 16 * n; i++) this.ember(b.x + Math.random() * b.w, b.y + Math.random() * b.h);
+      this.particles.push({ x, y, vx: 0, vy: 0, life: 0.35, max: 0.35, size: 40, color: "#ffb347", kind: "ring" });
+    } else if (cause === "laser") {
+      // Sliced into strips that slide apart with glowing cut edges.
+      const strips = 4;
+      for (let i = 0; i < strips; i++) {
+        const dir = i % 2 ? 1 : -1;
+        this.particles.push({
+          x: cx,
+          y: b.y + (b.h / strips) * (i + 0.5),
+          vx: dir * (90 + Math.random() * 60),
+          vy: (Math.random() - 0.5) * 20,
+          life: 0.45,
+          max: 0.45,
+          size: 0,
+          color: b.color,
+          kind: "slice",
+          w: b.w,
+          h: b.h / strips - 0.6,
+        });
+      }
+      this.spark(x, y, "#ff9ad5", Math.ceil(10 * n));
+    } else if (cause === "fast") {
+      // Shatters into spinning shards punched onward through the brick, away from the hit.
+      const len = Math.hypot(cx - x, cy - y);
+      const dx = len > 0.01 ? (cx - x) / len : 0;
+      const dy = len > 0.01 ? (cy - y) / len : -1;
+      for (let i = 0; i < 9 * n; i++) {
+        const a = Math.atan2(dy, dx) + (Math.random() - 0.5) * 1.6;
+        const v = 220 + Math.random() * 300;
+        this.particles.push({
+          x: b.x + Math.random() * b.w,
+          y: b.y + Math.random() * b.h,
+          vx: Math.cos(a) * v,
+          vy: Math.sin(a) * v,
+          life: 0.7,
+          max: 0.7,
+          size: 4 + Math.random() * 6,
+          color: b.color,
+          kind: "shard",
+          rot: Math.random() * 6,
+          vr: (Math.random() - 0.5) * 24,
+          grav: 600,
+        });
+      }
+      this.particles.push({ x, y, vx: 0, vy: 0, life: 0.4, max: 0.4, size: 60, color: "#ffffff", kind: "ring" });
+      if (!this.reduced) this.shake = Math.max(this.shake, 5);
+    }
+  }
+
   private spark(x: number, y: number, color: string, count: number) {
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2;
@@ -591,8 +707,10 @@ export class Game {
       q.life -= dt;
       q.x += q.vx * dt;
       q.y += q.vy * dt;
-      if (q.kind === "chip") q.vy += 700 * dt;
+      if (q.grav !== undefined) q.vy += q.grav * dt;
+      else if (q.kind === "chip") q.vy += 700 * dt;
       else q.vx *= 0.96;
+      if (q.vr) q.rot = (q.rot ?? 0) + q.vr * dt;
     }
     this.particles = this.particles.filter((q) => q.life > 0);
     for (const t of this.popups) {
@@ -622,17 +740,31 @@ export class Game {
 
     for (const d of this.drops) this.drawDrop(ctx, d);
 
-    ctx.strokeStyle = "#ff8fd0";
-    ctx.lineWidth = 3;
-    ctx.shadowColor = "#ff4fb3";
-    ctx.shadowBlur = 10;
     for (const bolt of this.bolts) {
+      const beam = ctx.createLinearGradient(0, bolt.y, 0, bolt.y + 34);
+      beam.addColorStop(0, "rgba(255,120,210,0.9)");
+      beam.addColorStop(1, "rgba(255,60,170,0)");
+      ctx.strokeStyle = beam;
+      ctx.lineCap = "round";
+      ctx.lineWidth = 7;
       ctx.beginPath();
       ctx.moveTo(bolt.x, bolt.y);
-      ctx.lineTo(bolt.x, bolt.y + 14);
+      ctx.lineTo(bolt.x, bolt.y + 34);
       ctx.stroke();
+      ctx.strokeStyle = "#ffe6f5";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(bolt.x, bolt.y);
+      ctx.lineTo(bolt.x, bolt.y + 18);
+      ctx.stroke();
+      const head = ctx.createRadialGradient(bolt.x, bolt.y, 0, bolt.x, bolt.y, 7);
+      head.addColorStop(0, "rgba(255,255,255,1)");
+      head.addColorStop(1, "rgba(255,90,190,0)");
+      ctx.fillStyle = head;
+      ctx.beginPath();
+      ctx.arc(bolt.x, bolt.y, 7, 0, Math.PI * 2);
+      ctx.fill();
     }
-    ctx.shadowBlur = 0;
 
     this.drawPaddle(ctx);
     this.balls.forEach((ball, i) => this.drawBall(ctx, ball, i));
@@ -646,6 +778,48 @@ export class Game {
         ctx.beginPath();
         ctx.arc(q.x, q.y, q.size * (1 - a) + 10, 0, Math.PI * 2);
         ctx.stroke();
+      } else if (q.kind === "burn") {
+        // White-hot ghost of the brick, cooling to red as it rises and shrinks.
+        const k = 1 - a;
+        const w = q.w! * (1 - k * 0.35);
+        const h = q.h! * (1 - k * 0.6);
+        const hot = ctx.createLinearGradient(0, q.y - h / 2, 0, q.y + h / 2);
+        hot.addColorStop(0, `rgba(255,250,220,${a})`);
+        hot.addColorStop(0.5, `rgba(255,170,60,${a})`);
+        hot.addColorStop(1, `rgba(200,40,10,${a * 0.6})`);
+        ctx.fillStyle = hot;
+        ctx.beginPath();
+        ctx.roundRect(q.x - w / 2, q.y - h / 2, w, h, 3);
+        ctx.fill();
+      } else if (q.kind === "slice") {
+        ctx.globalAlpha = a;
+        ctx.fillStyle = q.color;
+        ctx.fillRect(q.x - q.w! / 2, q.y - q.h! / 2, q.w!, q.h!);
+        ctx.fillStyle = "#ffd6f0";
+        ctx.fillRect(q.x - q.w! / 2, q.y - q.h! / 2, q.w!, 0.8);
+        ctx.fillRect(q.x - q.w! / 2, q.y + q.h! / 2 - 0.8, q.w!, 0.8);
+      } else if (q.kind === "shard") {
+        ctx.globalAlpha = Math.min(1, a * 1.5);
+        ctx.save();
+        ctx.translate(q.x, q.y);
+        ctx.rotate(q.rot ?? 0);
+        ctx.fillStyle = q.color;
+        ctx.beginPath();
+        ctx.moveTo(0, -q.size * 0.6);
+        ctx.lineTo(q.size * 0.55, q.size * 0.45);
+        ctx.lineTo(-q.size * 0.5, q.size * 0.35);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.6)";
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+        ctx.restore();
+      } else if (q.kind === "ember") {
+        ctx.globalAlpha = a * (0.6 + 0.4 * Math.sin(this.time * 30 + q.x));
+        ctx.fillStyle = q.color;
+        ctx.beginPath();
+        ctx.arc(q.x, q.y, q.size * (0.5 + a * 0.5), 0, Math.PI * 2);
+        ctx.fill();
       } else {
         ctx.globalAlpha = a;
         ctx.fillStyle = q.color;
@@ -751,7 +925,7 @@ export class Game {
     }
 
     if (b.flash > 0) {
-      ctx.fillStyle = `rgba(255,255,255,${b.flash * 0.6})`;
+      ctx.fillStyle = `rgba(${b.flashColor},${b.flash * 0.6})`;
       ctx.beginPath();
       ctx.roundRect(b.x, b.y, b.w, b.h, 3);
       ctx.fill();
@@ -828,6 +1002,7 @@ export class Game {
       trail: ball.trail,
       time: this.time,
       fire: Boolean(this.timers.fire),
+      fast: Boolean(this.timers.fast),
       reduced: this.reduced,
       seed: i * 1.37,
     });
