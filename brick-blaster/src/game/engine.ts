@@ -1,0 +1,825 @@
+import { COLS, LEVELS } from "./levels";
+import type { Sound } from "./sound";
+import { Backdrop } from "./backdrop";
+import { POWER_ICONS, type Tone } from "./icons";
+import { TRACKS } from "./music";
+
+// Logical playfield; the canvas scales it to fit.
+export const W = 800;
+export const H = 600;
+export const MAX_H = 1440;
+const PADDLE_H = 14;
+const PADDLE_W = 110;
+const BALL_R = 7;
+const TOP = 64;
+const SIDE = 28;
+const GAP = 4;
+const BRICK_H = 22;
+const BRICK_W = (W - SIDE * 2 - GAP * (COLS - 1)) / COLS;
+const STEP = 1 / 120;
+const MAX_BALLS = 12;
+
+type BrickType = "normal" | "strong" | "metal" | "explosive" | "mystery";
+type Brick = { x: number; y: number; w: number; h: number; type: BrickType; hp: number; maxHp: number; color: string; row: number; alive: boolean; flash: number };
+type Ball = { x: number; y: number; vx: number; vy: number; stuck: boolean; offset: number; trail: { x: number; y: number }[] };
+type Drop = { x: number; y: number; kind: PowerKind; spin: number };
+type Particle = { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number; color: string; kind: "chip" | "ring" | "spark" };
+type Popup = { x: number; y: number; text: string; life: number; color: string };
+
+export type PowerKind = "expand" | "shrink" | "multi" | "fire" | "laser" | "catch" | "slow" | "fast" | "life" | "shield";
+export type Phase = "title" | "ready" | "playing" | "paused" | "levelClear" | "gameOver" | "won";
+
+export const POWERS: Record<PowerKind, { label: string; good: boolean; color: string; duration?: number; weight: number }> = {
+  expand: { label: "Expand", good: true, color: "#3d7be0", duration: 20, weight: 14 },
+  multi: { label: "Multi-ball", good: true, color: "#8b5cf6", weight: 14 },
+  fire: { label: "Fireball", good: true, color: "#f2862f", duration: 10, weight: 8 },
+  laser: { label: "Laser", good: true, color: "#e2508a", duration: 12, weight: 10 },
+  catch: { label: "Catch", good: true, color: "#46b35e", duration: 15, weight: 10 },
+  slow: { label: "Slow", good: true, color: "#2fb7c9", duration: 12, weight: 10 },
+  life: { label: "Extra life", good: true, color: "#e8c43b", weight: 4 },
+  shield: { label: "Shield", good: true, color: "#6da7ec", weight: 8 },
+  shrink: { label: "Shrink", good: false, color: "#d63c3c", duration: 15, weight: 9 },
+  fast: { label: "Fast ball", good: false, color: "#d63c3c", duration: 10, weight: 9 },
+};
+
+const PALETTE: Record<string, string> = { r: "#e5484d", o: "#f2862f", y: "#e8c43b", g: "#46b35e", c: "#2fb7c9", b: "#3d7be0", p: "#a35be0", w: "#d9d9de" };
+const POINTS: Record<BrickType, number> = { normal: 50, strong: 120, metal: 0, explosive: 80, mystery: 100 };
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+function mix(hex: string, to: number, t: number) {
+  const n = parseInt(hex.slice(1), 16);
+  const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.round(v + (to - v) * t));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+
+function randomPower(): PowerKind {
+  const entries = Object.entries(POWERS) as [PowerKind, (typeof POWERS)[PowerKind]][];
+  let r = Math.random() * entries.reduce((a, [, p]) => a + p.weight, 0);
+  for (const [k, p] of entries) if ((r -= p.weight) <= 0) return k;
+  return "expand";
+}
+
+export type Snapshot = {
+  phase: Phase;
+  score: number;
+  lives: number;
+  level: number;
+  levelName: string;
+  best: number;
+  balls: number;
+  timers: { kind: PowerKind; left: number; total: number }[];
+  shield: boolean;
+};
+
+export class Game {
+  phase: Phase = "title";
+  level = 0;
+  score = 0;
+  lives = 3;
+  best = 0;
+  loop = 0;
+  paddle = { x: W / 2, w: PADDLE_W, targetX: W / 2 };
+  keys = { left: false, right: false };
+  balls: Ball[] = [];
+  bricks: Brick[] = [];
+  drops: Drop[] = [];
+  bolts: { x: number; y: number }[] = [];
+  particles: Particle[] = [];
+  popups: Popup[] = [];
+  timers: Partial<Record<PowerKind, number>> = {};
+  shield = false;
+  shake = 0;
+  banner = 0;
+  clearTimer = 0;
+  levelTime = 0;
+  time = 0;
+  laserCooldown = 0;
+  reduced = false;
+  onBest?: (score: number) => void;
+  private acc = 0;
+  private explosions: { brick: Brick; at: number }[] = [];
+  /** Playfield height in logical units; taller than 600 on portrait phones. */
+  h = H;
+  /** Touch device: changes the on-canvas hint text. */
+  touch = false;
+  /** On-screen CSS pixels per logical unit; small screens get a bigger ball and text. */
+  viewScale = 1;
+  private backdrop = new Backdrop(W);
+  private icons: Partial<Record<PowerKind, { path: Path2D; tone: Tone }[]>> = {};
+
+  private sound: Sound;
+
+  get paddleY() {
+    return this.h - 44;
+  }
+
+  /** Visual boost for text and pickups when the canvas is drawn small (phones). */
+  private get boost() {
+    return clamp(0.72 / this.viewScale, 1, 1.9);
+  }
+
+  /** Resize the playfield height (e.g. phone rotated); keeps balls in play. */
+  setHeight(h: number) {
+    if (h === this.h) return;
+    this.h = h;
+    for (const b of this.balls) {
+      if (b.stuck) b.y = this.paddleY - BALL_R - 1;
+      else if (b.y > this.paddleY - 30) {
+        b.y = this.paddleY - 30;
+        b.vy = -Math.abs(b.vy);
+      }
+    }
+  }
+
+  constructor(sound: Sound) {
+    this.sound = sound;
+    this.loadLevel(0);
+    this.phase = "title";
+  }
+
+  snapshot(): Snapshot {
+    return {
+      phase: this.phase,
+      score: this.score,
+      lives: this.lives,
+      level: this.level + 1,
+      levelName: LEVELS[this.level].name,
+      best: this.best,
+      balls: this.balls.length,
+      timers: (Object.keys(this.timers) as PowerKind[]).map((k) => ({ kind: k, left: this.timers[k]!, total: POWERS[k].duration ?? 1 })),
+      shield: this.shield,
+    };
+  }
+
+  // ── Flow ──────────────────────────────────────────────────────────────────────────
+  newGame() {
+    this.score = 0;
+    this.lives = 3;
+    this.loop = 0;
+    this.loadLevel(0);
+  }
+
+  loadLevel(n: number) {
+    this.level = n;
+    this.bricks = [];
+    LEVELS[n].rows.forEach((raw, row) => {
+      const line = raw.padEnd(COLS, ".").slice(0, COLS);
+      [...line].forEach((ch, col) => {
+        if (ch === ".") return;
+        const type: BrickType = ch === "M" ? "metal" : ch === "X" ? "explosive" : ch === "?" ? "mystery" : ch === "2" || ch === "3" ? "strong" : "normal";
+        const hp = type === "strong" ? Number(ch) : 1;
+        const color = type === "metal" ? "#a9adb8" : type === "explosive" ? "#e0452f" : type === "mystery" ? "#d6a72c" : type === "strong" ? (hp === 3 ? "#5b5f73" : "#7a7f96") : PALETTE[ch] ?? "#d9d9de";
+        this.bricks.push({ x: SIDE + col * (BRICK_W + GAP), y: TOP + row * (BRICK_H + GAP), w: BRICK_W, h: BRICK_H, type, hp, maxHp: hp, color, row, alive: true, flash: 0 });
+      });
+    });
+    this.resetRound();
+    this.banner = 2.2;
+    this.levelTime = 0;
+  }
+
+  private resetRound() {
+    this.paddle.w = PADDLE_W;
+    this.timers = {};
+    this.drops = [];
+    this.bolts = [];
+    this.explosions = [];
+    this.balls = [{ x: this.paddle.x, y: this.paddleY - BALL_R - 1, vx: 0, vy: 0, stuck: true, offset: 0, trail: [] }];
+    this.phase = "ready";
+  }
+
+  /** Click / Space: start, launch, release a caught ball, or fire the laser. */
+  action() {
+    if (this.phase === "title" || this.phase === "gameOver" || this.phase === "won") {
+      this.newGame();
+      return;
+    }
+    if (this.phase === "paused") {
+      this.phase = "playing";
+      return;
+    }
+    if (this.phase === "ready") this.phase = "playing";
+    if (this.phase !== "playing") return;
+    const stuck = this.balls.filter((b) => b.stuck);
+    if (stuck.length) {
+      for (const b of stuck) this.release(b);
+      return;
+    }
+    if (this.timers.laser && this.laserCooldown <= 0) {
+      this.bolts.push({ x: this.paddle.x - this.paddle.w / 2 + 8, y: this.paddleY - 4 }, { x: this.paddle.x + this.paddle.w / 2 - 8, y: this.paddleY - 4 });
+      this.laserCooldown = 0.2;
+      this.sound.laser();
+    }
+  }
+
+  /** Fire the laser only (touch hold auto-fire); never launches a ball. */
+  fire() {
+    if (this.phase === "playing" && this.timers.laser && this.laserCooldown <= 0 && !this.balls.some((b) => b.stuck)) this.action();
+  }
+
+  togglePause() {
+    if (this.phase === "playing") this.phase = "paused";
+    else if (this.phase === "paused") this.phase = "playing";
+  }
+
+  private speed() {
+    const base = 360 + this.level * 14 + this.loop * 60;
+    const ramp = 1 + Math.min(this.levelTime / 100, 0.3);
+    // A taller (portrait) field means a longer trip, so the ball moves a little faster to keep the pace.
+    const tall = (this.h / H) ** 0.6;
+    return base * ramp * tall * (this.timers.slow ? 0.7 : 1) * (this.timers.fast ? 1.35 : 1);
+  }
+
+  private release(b: Ball) {
+    const offset = clamp(b.offset / (this.paddle.w / 2), -1, 1);
+    const angle = offset * 0.9 + (Math.random() - 0.5) * 0.2;
+    const sp = this.speed();
+    b.stuck = false;
+    b.vx = sp * Math.sin(angle);
+    b.vy = -sp * Math.cos(angle);
+  }
+
+  // ── Simulation ────────────────────────────────────────────────────────────────────
+  update(dt: number) {
+    this.time += dt;
+    this.backdrop.update(dt, this.h, this.reduced);
+    this.banner = Math.max(0, this.banner - dt);
+    this.shake = Math.max(0, this.shake - dt * 30);
+    this.updateEffects(dt);
+    if (this.phase === "levelClear") {
+      this.clearTimer -= dt;
+      if (this.clearTimer <= 0) {
+        if (this.level + 1 < LEVELS.length) this.loadLevel(this.level + 1);
+        else {
+          this.phase = "won";
+          this.saveBest();
+        }
+      }
+      return;
+    }
+    if (this.phase !== "playing" && this.phase !== "ready") return;
+    this.acc += dt;
+    while (this.acc >= STEP) {
+      this.step(STEP);
+      this.acc -= STEP;
+    }
+  }
+
+  private step(h: number) {
+    const p = this.paddle;
+    if (this.keys.left) p.targetX -= 720 * h;
+    if (this.keys.right) p.targetX += 720 * h;
+    const desired = PADDLE_W * (this.timers.expand ? 1.5 : 1) * (this.timers.shrink ? 0.62 : 1);
+    p.w += (desired - p.w) * Math.min(1, h * 10);
+    p.targetX = clamp(p.targetX, p.w / 2, W - p.w / 2);
+    p.x = p.targetX;
+    if (this.phase === "ready") {
+      for (const b of this.balls) b.x = p.x + b.offset;
+      return;
+    }
+    this.levelTime += h;
+    this.laserCooldown -= h;
+
+    for (const k of Object.keys(this.timers) as PowerKind[]) {
+      this.timers[k]! -= h;
+      if (this.timers[k]! <= 0) {
+        delete this.timers[k];
+        if (k === "catch") this.balls.filter((b) => b.stuck).forEach((b) => this.release(b));
+      }
+    }
+
+    const sp = this.speed();
+    for (const ball of this.balls) {
+      if (ball.stuck) {
+        ball.x = p.x + ball.offset;
+        ball.y = this.paddleY - BALL_R - 1;
+        continue;
+      }
+      // Ease each ball towards the current target speed.
+      const cur = Math.hypot(ball.vx, ball.vy) || sp;
+      const k = (cur + (sp - cur) * Math.min(1, h * 2)) / cur;
+      ball.vx *= k;
+      ball.vy *= k;
+      // Never let the ball travel almost horizontally forever.
+      if (Math.abs(ball.vy) < sp * 0.25) ball.vy = Math.sign(ball.vy || -1) * sp * 0.25;
+      this.moveBall(ball, h);
+      ball.trail.push({ x: ball.x, y: ball.y });
+      if (ball.trail.length > 10) ball.trail.shift();
+    }
+    this.balls = this.balls.filter((b) => b.y - BALL_R < this.h + 20);
+    if (!this.balls.length) {
+      this.loseLife();
+      return;
+    }
+
+    for (const d of this.drops) {
+      d.y += 150 * h;
+      d.spin += h * 4;
+    }
+    this.drops = this.drops.filter((d) => {
+      const caught = d.y + 12 >= this.paddleY && d.y - 12 <= this.paddleY + PADDLE_H && Math.abs(d.x - p.x) < p.w / 2 + 20;
+      if (caught) this.applyPower(d.kind, d.x);
+      return !caught && d.y < this.h + 20;
+    });
+
+    for (const bolt of this.bolts) bolt.y -= 900 * h;
+    this.bolts = this.bolts.filter((bolt) => {
+      if (bolt.y < 0) return false;
+      const hit = this.bricks.find((b) => b.alive && bolt.x >= b.x && bolt.x <= b.x + b.w && bolt.y >= b.y && bolt.y <= b.y + b.h);
+      if (hit) {
+        this.hitBrick(hit);
+        this.spark(bolt.x, bolt.y, "#ff9ad5", 4);
+      }
+      return !hit;
+    });
+
+    while (this.explosions.length && this.explosions[0].at <= this.levelTime) this.explode(this.explosions.shift()!.brick);
+
+    if (!this.bricks.some((b) => b.alive && b.type !== "metal")) {
+      const bonus = 1000 + this.lives * 250;
+      this.score += bonus;
+      this.popups.push({ x: W / 2, y: this.h / 2 + 40, text: `Level clear +${bonus}`, life: 2, color: "#e8c43b" });
+      this.sound.level();
+      this.phase = "levelClear";
+      this.clearTimer = 2;
+      if (this.level + 1 >= LEVELS.length) this.loop++;
+    }
+  }
+
+  /** Moves a ball in small sub-steps so even fast balls never tunnel through a brick. */
+  private moveBall(ball: Ball, h: number) {
+    const dist = Math.hypot(ball.vx, ball.vy) * h;
+    const n = Math.max(1, Math.ceil(dist / (BALL_R * 0.5)));
+    const dt = h / n;
+    const p = this.paddle;
+    for (let i = 0; i < n; i++) {
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      if (ball.x < BALL_R) {
+        ball.x = BALL_R;
+        ball.vx = Math.abs(ball.vx);
+        this.sound.wall();
+      } else if (ball.x > W - BALL_R) {
+        ball.x = W - BALL_R;
+        ball.vx = -Math.abs(ball.vx);
+        this.sound.wall();
+      }
+      if (ball.y < BALL_R) {
+        ball.y = BALL_R;
+        ball.vy = Math.abs(ball.vy);
+        this.sound.wall();
+      }
+
+      // Paddle: the further from the centre, the sharper the angle (up to ~60°).
+      if (ball.vy > 0 && ball.y + BALL_R >= this.paddleY && ball.y - BALL_R <= this.paddleY + PADDLE_H && Math.abs(ball.x - p.x) <= p.w / 2 + BALL_R) {
+        const offset = clamp((ball.x - p.x) / (p.w / 2), -1, 1);
+        const angle = offset * 1.05;
+        const sp = Math.hypot(ball.vx, ball.vy);
+        ball.vx = sp * Math.sin(angle);
+        ball.vy = -sp * Math.cos(angle);
+        ball.y = this.paddleY - BALL_R;
+        this.sound.paddle();
+        if (this.timers.catch) {
+          ball.stuck = true;
+          ball.offset = ball.x - p.x;
+          return;
+        }
+      }
+
+      if (this.shield && ball.vy > 0 && ball.y + BALL_R >= this.h - 6) {
+        ball.vy = -Math.abs(ball.vy);
+        this.shield = false;
+        for (let k = 0; k < 20; k++) this.spark(Math.random() * W, this.h - 6, "#6da7ec", 1);
+        this.sound.metal();
+      }
+
+      for (const b of this.bricks) {
+        if (!b.alive) continue;
+        const cx = clamp(ball.x, b.x, b.x + b.w);
+        const cy = clamp(ball.y, b.y, b.y + b.h);
+        const dx = ball.x - cx;
+        const dy = ball.y - cy;
+        if (dx * dx + dy * dy >= BALL_R * BALL_R) continue;
+        if (this.timers.fire && b.type !== "metal") {
+          this.destroy(b);
+          continue;
+        }
+        // Reflect on the axis of contact and push the ball out of the brick.
+        if (Math.abs(dx) > Math.abs(dy)) {
+          ball.vx = dx > 0 ? Math.abs(ball.vx) : -Math.abs(ball.vx);
+          ball.x = cx + Math.sign(dx || 1) * BALL_R;
+        } else {
+          ball.vy = dy > 0 ? Math.abs(ball.vy) : dy < 0 ? -Math.abs(ball.vy) : -ball.vy;
+          ball.y = cy + (dy !== 0 ? Math.sign(dy) : ball.vy > 0 ? 1 : -1) * BALL_R;
+        }
+        this.hitBrick(b);
+        break;
+      }
+    }
+  }
+
+  private hitBrick(b: Brick) {
+    b.flash = 1;
+    if (b.type === "metal") {
+      this.sound.metal();
+      return;
+    }
+    b.hp--;
+    if (b.hp > 0) {
+      this.score += 10;
+      this.sound.crack();
+      this.chips(b, 3);
+      return;
+    }
+    this.destroy(b);
+  }
+
+  private destroy(b: Brick) {
+    if (!b.alive || b.type === "metal") return;
+    b.alive = false;
+    const pts = POINTS[b.type] * (b.type === "strong" ? b.maxHp : 1);
+    this.score += pts;
+    this.popups.push({ x: b.x + b.w / 2, y: b.y, text: `+${pts}`, life: 0.8, color: "#ffffff" });
+    this.chips(b, this.reduced ? 4 : 12);
+    this.sound.brick(b.row);
+    if (b.type === "mystery" || Math.random() < 0.1) this.drops.push({ x: b.x + b.w / 2, y: b.y + b.h / 2, kind: randomPower(), spin: 0 });
+    if (b.type === "explosive") this.explosions.push({ brick: b, at: this.levelTime + 0.06 });
+  }
+
+  /** Blows up every neighbouring brick; neighbouring explosives chain after a short delay. */
+  private explode(b: Brick) {
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    this.sound.explode();
+    if (!this.reduced) this.shake = Math.max(this.shake, 9);
+    this.particles.push({ x: cx, y: cy, vx: 0, vy: 0, life: 0.45, max: 0.45, size: 90, color: "#ffb347", kind: "ring" });
+    for (let i = 0; i < (this.reduced ? 8 : 26); i++) this.spark(cx, cy, i % 2 ? "#ffd166" : "#ff6b3d", 1);
+    for (const o of this.bricks) {
+      if (!o.alive || o === b || o.type === "metal") continue;
+      if (Math.abs(o.x + o.w / 2 - cx) <= BRICK_W * 1.2 && Math.abs(o.y + o.h / 2 - cy) <= BRICK_H * 1.6) {
+        if (o.type === "explosive") {
+          o.alive = false;
+          this.score += POINTS.explosive;
+          this.explosions.push({ brick: o, at: this.levelTime + 0.09 });
+        } else this.destroy(o);
+      }
+    }
+  }
+
+  private applyPower(kind: PowerKind, x: number) {
+    const info = POWERS[kind];
+    this.sound.powerUp(info.good);
+    this.popups.push({ x, y: this.paddleY - 24, text: info.label, life: 1.1, color: info.good ? info.color : "#ff7b7b" });
+    this.score += 25;
+    switch (kind) {
+      case "expand":
+        delete this.timers.shrink;
+        break;
+      case "shrink":
+        delete this.timers.expand;
+        break;
+      case "slow":
+        delete this.timers.fast;
+        break;
+      case "fast":
+        delete this.timers.slow;
+        break;
+      case "life":
+        this.lives = Math.min(9, this.lives + 1);
+        return;
+      case "shield":
+        this.shield = true;
+        return;
+      case "multi": {
+        const extra: Ball[] = [];
+        for (const b of this.balls) {
+          if (b.stuck) this.release(b);
+          for (const turn of [-0.4, 0.4]) {
+            if (this.balls.length + extra.length >= MAX_BALLS) break;
+            const c = Math.cos(turn);
+            const s = Math.sin(turn);
+            extra.push({ x: b.x, y: b.y, vx: b.vx * c - b.vy * s, vy: b.vx * s + b.vy * c, stuck: false, offset: 0, trail: [] });
+          }
+        }
+        this.balls.push(...extra);
+        return;
+      }
+    }
+    if (info.duration) this.timers[kind] = info.duration;
+  }
+
+  private loseLife() {
+    this.lives--;
+    this.sound.lose();
+    if (!this.reduced) this.shake = 12;
+    if (this.lives <= 0) {
+      this.phase = "gameOver";
+      this.saveBest();
+      return;
+    }
+    this.shield = false;
+    this.resetRound();
+  }
+
+  private saveBest() {
+    if (this.score > this.best) {
+      this.best = this.score;
+      this.onBest?.(this.score);
+    }
+  }
+
+  // ── Effects ───────────────────────────────────────────────────────────────────────
+  private chips(b: Brick, count: number) {
+    for (let i = 0; i < count; i++) {
+      this.particles.push({
+        x: b.x + Math.random() * b.w,
+        y: b.y + Math.random() * b.h,
+        vx: (Math.random() - 0.5) * 260,
+        vy: (Math.random() - 0.8) * 220,
+        life: 0.7,
+        max: 0.7,
+        size: 2 + Math.random() * 4,
+        color: b.color,
+        kind: "chip",
+      });
+    }
+  }
+
+  private spark(x: number, y: number, color: string, count: number) {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 80 + Math.random() * 320;
+      this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5, max: 0.5, size: 2.5, color, kind: "spark" });
+    }
+  }
+
+  private updateEffects(dt: number) {
+    for (const b of this.bricks) b.flash = Math.max(0, b.flash - dt * 6);
+    for (const q of this.particles) {
+      q.life -= dt;
+      q.x += q.vx * dt;
+      q.y += q.vy * dt;
+      if (q.kind === "chip") q.vy += 700 * dt;
+      else q.vx *= 0.96;
+    }
+    this.particles = this.particles.filter((q) => q.life > 0);
+    for (const t of this.popups) {
+      t.life -= dt;
+      t.y -= 40 * dt;
+    }
+    this.popups = this.popups.filter((t) => t.life > 0);
+  }
+
+  // ── Rendering ─────────────────────────────────────────────────────────────────────
+  render(ctx: CanvasRenderingContext2D, scale: number) {
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    this.backdrop.draw(ctx, this.h, scale, this.time, this.reduced);
+
+    ctx.save();
+    if (this.shake > 0) ctx.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
+
+    for (const b of this.bricks) if (b.alive) this.drawBrick(ctx, b);
+
+    if (this.shield) {
+      ctx.fillStyle = "rgba(109,167,236,0.35)";
+      ctx.fillRect(0, this.h - 8, W, 4);
+      ctx.fillStyle = "#9cc6f5";
+      ctx.fillRect(0, this.h - 7, W, 1.5);
+    }
+
+    for (const d of this.drops) this.drawDrop(ctx, d);
+
+    ctx.strokeStyle = "#ff8fd0";
+    ctx.lineWidth = 3;
+    ctx.shadowColor = "#ff4fb3";
+    ctx.shadowBlur = 10;
+    for (const bolt of this.bolts) {
+      ctx.beginPath();
+      ctx.moveTo(bolt.x, bolt.y);
+      ctx.lineTo(bolt.x, bolt.y + 14);
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+
+    this.drawPaddle(ctx);
+    for (const ball of this.balls) this.drawBall(ctx, ball);
+
+    for (const q of this.particles) {
+      const a = q.life / q.max;
+      if (q.kind === "ring") {
+        ctx.strokeStyle = q.color;
+        ctx.globalAlpha = a;
+        ctx.lineWidth = 6 * a;
+        ctx.beginPath();
+        ctx.arc(q.x, q.y, q.size * (1 - a) + 10, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.globalAlpha = a;
+        ctx.fillStyle = q.color;
+        ctx.fillRect(q.x - q.size / 2, q.y - q.size / 2, q.size, q.size);
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    ctx.textAlign = "center";
+    for (const t of this.popups) {
+      ctx.globalAlpha = Math.min(1, t.life * 2);
+      ctx.font = `700 ${15 * this.boost}px system-ui, sans-serif`;
+      ctx.fillStyle = t.color;
+      ctx.fillText(t.text, t.x, t.y);
+    }
+    ctx.globalAlpha = 1;
+
+    if (this.banner > 0 && this.phase !== "title") {
+      ctx.globalAlpha = Math.min(1, this.banner);
+      ctx.font = `800 ${44 * Math.min(this.boost, 1.5)}px system-ui, sans-serif`;
+      ctx.fillStyle = "#ffffff";
+      ctx.shadowColor = "#ff3b1f";
+      ctx.shadowBlur = 20;
+      ctx.fillText(`LEVEL ${this.level + 1}`, W / 2, this.h / 2 + 20);
+      ctx.shadowBlur = 0;
+      ctx.font = `600 ${18 * this.boost}px system-ui, sans-serif`;
+      ctx.fillStyle = "#ffb199";
+      ctx.fillText(LEVELS[this.level].name, W / 2, this.h / 2 + 20 + 30 * this.boost);
+      ctx.font = `italic 500 ${14 * this.boost}px system-ui, sans-serif`;
+      ctx.fillStyle = "#ff9a7a";
+      ctx.fillText(`♪ ${TRACKS[this.level % TRACKS.length].name}`, W / 2, this.h / 2 + 20 + 56 * this.boost);
+      ctx.globalAlpha = 1;
+    }
+    if (this.phase === "ready" && this.banner <= 0.6) {
+      ctx.font = `600 ${15 * this.boost}px system-ui, sans-serif`;
+      ctx.fillStyle = `rgba(255,255,255,${0.55 + 0.35 * Math.sin(this.time * 4)})`;
+      ctx.fillText(this.touch ? "Tap to launch" : "Click or press Space to launch", W / 2, this.paddleY - 40);
+    }
+  }
+
+  private drawBrick(ctx: CanvasRenderingContext2D, b: Brick) {
+    const g = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+    if (b.type === "metal") {
+      g.addColorStop(0, "#f2f4f8");
+      g.addColorStop(0.45, "#a9adb8");
+      g.addColorStop(0.55, "#8d919e");
+      g.addColorStop(1, "#5f6370");
+    } else {
+      g.addColorStop(0, mix(b.color, 255, 0.45));
+      g.addColorStop(0.5, b.color);
+      g.addColorStop(1, mix(b.color, 0, 0.45));
+    }
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.roundRect(b.x, b.y, b.w, b.h, 4);
+    ctx.fill();
+    // Bevel: bright top edge, dark bottom edge.
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.fillRect(b.x + 3, b.y + 2, b.w - 6, 2);
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(b.x + 3, b.y + b.h - 3, b.w - 6, 2);
+
+    if (b.type === "strong") {
+      ctx.fillStyle = "rgba(255,255,255,0.6)";
+      for (const rx of [6, b.w - 6]) {
+        ctx.beginPath();
+        ctx.arc(b.x + rx, b.y + b.h / 2, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (b.hp < b.maxHp) {
+        ctx.strokeStyle = "rgba(0,0,0,0.55)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(b.x + b.w * 0.3, b.y + 2);
+        ctx.lineTo(b.x + b.w * 0.42, b.y + b.h * 0.55);
+        ctx.lineTo(b.x + b.w * 0.36, b.y + b.h - 2);
+        if (b.maxHp - b.hp > 1) {
+          ctx.moveTo(b.x + b.w * 0.42, b.y + b.h * 0.55);
+          ctx.lineTo(b.x + b.w * 0.7, b.y + b.h * 0.4);
+          ctx.lineTo(b.x + b.w * 0.82, b.y + 2);
+        }
+        ctx.stroke();
+      }
+    }
+    if (b.type === "metal") {
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
+      ctx.beginPath();
+      ctx.moveTo(b.x + b.w * 0.25, b.y);
+      ctx.lineTo(b.x + b.w * 0.45, b.y);
+      ctx.lineTo(b.x + b.w * 0.3, b.y + b.h);
+      ctx.lineTo(b.x + b.w * 0.1, b.y + b.h);
+      ctx.fill();
+    }
+    if (b.type === "explosive" || b.type === "mystery") {
+      ctx.font = `800 ${b.type === "mystery" ? 15 : 13}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = b.type === "mystery" ? `rgba(255,255,255,${0.75 + 0.25 * Math.sin(this.time * 5)})` : "#fff3c4";
+      ctx.fillText(b.type === "mystery" ? "?" : "✸", b.x + b.w / 2, b.y + b.h / 2 + 1);
+      ctx.textBaseline = "alphabetic";
+    }
+    if (b.type === "explosive") {
+      ctx.strokeStyle = `rgba(255,200,80,${0.35 + 0.3 * Math.sin(this.time * 6)})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, 4);
+      ctx.stroke();
+    }
+    if (b.flash > 0) {
+      ctx.fillStyle = `rgba(255,255,255,${b.flash * 0.7})`;
+      ctx.beginPath();
+      ctx.roundRect(b.x, b.y, b.w, b.h, 4);
+      ctx.fill();
+    }
+  }
+
+  private drawDrop(ctx: CanvasRenderingContext2D, d: Drop) {
+    const info = POWERS[d.kind];
+    const w = 48 * this.boost;
+    const h = 24 * this.boost;
+    const g = ctx.createLinearGradient(0, d.y - h / 2, 0, d.y + h / 2);
+    g.addColorStop(0, mix(info.color, 255, 0.5));
+    g.addColorStop(0.5, info.color);
+    g.addColorStop(1, mix(info.color, 0, 0.4));
+    ctx.fillStyle = g;
+    ctx.shadowColor = info.color;
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.roundRect(d.x - w / 2, d.y - h / 2, w, h, h / 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // Glossy capsule: dark rim plus a bright highlight band across the top.
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.beginPath();
+    ctx.roundRect(d.x - w / 2 + h * 0.3, d.y - h / 2 + 2, w - h * 0.6, h * 0.28, h * 0.14);
+    ctx.fill();
+
+    // Layered icon (shared 24×24 paths) with a soft drop shadow so it reads on any colour.
+    const layers = (this.icons[d.kind] ??= POWER_ICONS[d.kind].map((l) => ({ path: new Path2D(l.d), tone: l.tone })));
+    const size = 20 * this.boost;
+    ctx.save();
+    ctx.translate(d.x - size / 2, d.y - size / 2);
+    ctx.scale(size / 24, size / 24);
+    for (const l of layers) {
+      ctx.shadowColor = l.tone === "main" ? "rgba(0,0,0,0.55)" : "transparent";
+      ctx.shadowBlur = l.tone === "main" ? 3 : 0;
+      ctx.fillStyle = l.tone === "main" ? "#ffffff" : l.tone === "soft" ? "rgba(255,255,255,0.6)" : mix(info.color, 0, 0.35);
+      ctx.fill(l.path, "evenodd");
+    }
+    ctx.restore();
+  }
+
+  private drawPaddle(ctx: CanvasRenderingContext2D) {
+    const p = this.paddle;
+    const x = p.x - p.w / 2;
+    const g = ctx.createLinearGradient(0, this.paddleY, 0, this.paddleY + PADDLE_H);
+    g.addColorStop(0, "#f5f7ff");
+    g.addColorStop(0.45, "#a8b1cc");
+    g.addColorStop(1, "#4b5470");
+    ctx.shadowColor = this.timers.catch ? "#46b35e" : this.timers.laser ? "#ff4fb3" : "#7aa2ff";
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.roundRect(x, this.paddleY, p.w, PADDLE_H, PADDLE_H / 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // Coloured end caps, like the classic.
+    const cap = this.timers.laser ? "#ff4fb3" : this.timers.catch ? "#46b35e" : "#e5484d";
+    ctx.fillStyle = cap;
+    ctx.beginPath();
+    ctx.roundRect(x, this.paddleY, 16, PADDLE_H, [PADDLE_H / 2, 0, 0, PADDLE_H / 2]);
+    ctx.roundRect(x + p.w - 16, this.paddleY, 16, PADDLE_H, [0, PADDLE_H / 2, PADDLE_H / 2, 0]);
+    ctx.fill();
+    if (this.timers.laser) {
+      ctx.fillStyle = "#ffd1ec";
+      ctx.fillRect(x + 6, this.paddleY - 6, 4, 6);
+      ctx.fillRect(x + p.w - 10, this.paddleY - 6, 4, 6);
+    }
+  }
+
+  private drawBall(ctx: CanvasRenderingContext2D, ball: Ball) {
+    const fire = Boolean(this.timers.fire);
+    // Drawn a little larger on small screens so it stays easy to track.
+    const r = BALL_R * Math.min(this.boost, 1.45);
+    ball.trail.forEach((t, i) => {
+      const a = (i + 1) / ball.trail.length;
+      ctx.globalAlpha = a * 0.35;
+      ctx.fillStyle = fire ? "#ff8a3d" : "#9fb6ff";
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r * a * (fire ? 1.3 : 0.9), 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    const g = ctx.createRadialGradient(ball.x - r * 0.3, ball.y - r * 0.3, 1, ball.x, ball.y, r);
+    g.addColorStop(0, "#ffffff");
+    g.addColorStop(1, fire ? "#ff6a1a" : "#b9c8ff");
+    ctx.shadowColor = fire ? "#ff6a1a" : "#ffffff";
+    ctx.shadowBlur = fire ? 20 : 12;
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
