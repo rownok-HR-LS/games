@@ -4,6 +4,7 @@ import { Backdrop } from "./backdrop";
 import { POWER_ICONS, type Tone } from "./icons";
 import { TRACKS } from "./music";
 import { BrickSkins, LEVEL_THEMES, SKIN_PAD } from "./brickskins";
+import { drawPaddle } from "./paddle";
 
 // Logical playfield; the canvas scales it to fit.
 export const W = 800;
@@ -108,6 +109,9 @@ export class Game {
   viewScale = 1;
   private backdrop = new Backdrop(W);
   private skins = new BrickSkins();
+  /** Paddle burst when a power is gained (its colour) or lost (smoke grey). */
+  private paddleFlash = 0;
+  private paddleFlashColor = "#ffffff";
   private renderScale = 1;
   private icons: Partial<Record<PowerKind, { path: Path2D; tone: Tone }[]>> = {};
 
@@ -209,7 +213,7 @@ export class Game {
       return;
     }
     if (this.timers.laser && this.laserCooldown <= 0) {
-      this.bolts.push({ x: this.paddle.x - this.paddle.w / 2 + 8, y: this.paddleY - 4 }, { x: this.paddle.x + this.paddle.w / 2 - 8, y: this.paddleY - 4 });
+      this.bolts.push({ x: this.paddle.x - this.paddle.w / 2 + 8, y: this.paddleY - 12 }, { x: this.paddle.x + this.paddle.w / 2 - 8, y: this.paddleY - 12 });
       this.laserCooldown = 0.2;
       this.sound.laser();
     }
@@ -287,6 +291,7 @@ export class Game {
       this.timers[k]! -= h;
       if (this.timers[k]! <= 0) {
         delete this.timers[k];
+        this.powerDown();
         if (k === "catch") this.balls.filter((b) => b.stuck).forEach((b) => this.release(b));
       }
     }
@@ -470,8 +475,28 @@ export class Game {
     }
   }
 
+  private powerDown() {
+    this.paddleFlash = 0.8;
+    this.paddleFlashColor = "#9a9aa6";
+    for (let i = 0; i < (this.reduced ? 4 : 14); i++) {
+      this.particles.push({
+        x: this.paddle.x + (Math.random() - 0.5) * this.paddle.w,
+        y: this.paddleY,
+        vx: (Math.random() - 0.5) * 60,
+        vy: -40 - Math.random() * 60,
+        life: 0.7,
+        max: 0.7,
+        size: 3 + Math.random() * 3,
+        color: "#6b6b75",
+        kind: "spark",
+      });
+    }
+  }
+
   private applyPower(kind: PowerKind, x: number) {
     const info = POWERS[kind];
+    this.paddleFlash = 1;
+    this.paddleFlashColor = info.good ? info.color : "#ff3a2a";
     this.sound.powerUp(info.good);
     this.popups.push({ x, y: this.paddleY - 24, text: info.label, life: 1.1, color: info.good ? info.color : "#ff7b7b" });
     this.score += 25;
@@ -558,6 +583,7 @@ export class Game {
   }
 
   private updateEffects(dt: number) {
+    this.paddleFlash = Math.max(0, this.paddleFlash - dt * 2.2);
     for (const b of this.bricks) b.flash = Math.max(0, b.flash - dt * 6);
     for (const q of this.particles) {
       q.life -= dt;
@@ -772,31 +798,21 @@ export class Game {
 
   private drawPaddle(ctx: CanvasRenderingContext2D) {
     const p = this.paddle;
-    const x = p.x - p.w / 2;
-    const g = ctx.createLinearGradient(0, this.paddleY, 0, this.paddleY + PADDLE_H);
-    g.addColorStop(0, "#f5f7ff");
-    g.addColorStop(0.45, "#a8b1cc");
-    g.addColorStop(1, "#4b5470");
-    ctx.shadowColor = this.timers.catch ? "#46b35e" : this.timers.laser ? "#ff4fb3" : "#7aa2ff";
-    ctx.shadowBlur = 18;
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.roundRect(x, this.paddleY, p.w, PADDLE_H, PADDLE_H / 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    // Coloured end caps, like the classic.
-    const cap = this.timers.laser ? "#ff4fb3" : this.timers.catch ? "#46b35e" : "#e5484d";
-    ctx.fillStyle = cap;
-    ctx.beginPath();
-    ctx.roundRect(x, this.paddleY, 16, PADDLE_H, [PADDLE_H / 2, 0, 0, PADDLE_H / 2]);
-    ctx.roundRect(x + p.w - 16, this.paddleY, 16, PADDLE_H, [0, PADDLE_H / 2, PADDLE_H / 2, 0]);
-    ctx.fill();
-    if (this.timers.laser) {
-      ctx.fillStyle = "#ffd1ec";
-      ctx.fillRect(x + 6, this.paddleY - 6, 4, 6);
-      ctx.fillRect(x + p.w - 10, this.paddleY - 6, 4, 6);
-    }
+    drawPaddle(ctx, {
+      x: p.x,
+      y: this.paddleY,
+      w: p.w,
+      h: PADDLE_H,
+      time: this.time,
+      timers: this.timers,
+      flash: this.paddleFlash,
+      flashColor: this.paddleFlashColor,
+      muzzle: Math.max(0, (this.laserCooldown - 0.1) / 0.1),
+      shield: this.shield,
+      reduced: this.reduced,
+    });
   }
+
 
   private drawBall(ctx: CanvasRenderingContext2D, ball: Ball) {
     const fire = Boolean(this.timers.fire);
