@@ -1,0 +1,280 @@
+:root {
+  color-scheme: dark;
+  --ink: #f6ece6;
+  --muted: #b99a90;
+  --blood: #c4121a;
+  --ember: #ff6a1a;
+  --gold: #e8c46a;
+  --bg: #070304;
+  --line: rgba(255, 90, 60, 0.25);
+  --title: "Cinzel", "Trajan Pro", Georgia, serif;
+  --hud: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+button { font: inherit; color: inherit; }
+
+.home {
+  position: fixed; top: 10px; left: 12px; z-index: 50;
+  color: var(--muted); text-decoration: none; font-size: 13px; opacity: 0.7;
+}
+.home:hover { opacity: 1; color: var(--ink); }
+
+.ros { position: fixed; inset: 0; overflow: hidden; cursor: crosshair; }
+.ros-stage { position: absolute; inset: 0; }
+.ros-vignette {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+/* ── Screens ─────────────────────────────────────────────────────────── */
+.ros-screen {
+  position: absolute; inset: 0; z-index: 20;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 24px 16px; text-align: center; cursor: default;
+  background: radial-gradient(ellipse at 50% 40%, rgba(40, 4, 6, 0.55), rgba(5, 2, 3, 0.92) 70%);
+  overflow-y: auto;
+}
+.ros-title { background: radial-gradient(ellipse at 50% 35%, rgba(70, 6, 8, 0.35), rgba(5, 2, 3, 0.88) 65%); }
+.ros-logo { display: flex; flex-direction: column; align-items: center; line-height: 0.9; }
+.ros-logo-rise {
+  font-family: var(--title); font-weight: 700; letter-spacing: 0.5em; text-transform: uppercase;
+  font-size: clamp(14px, 2.6vw, 22px); color: var(--gold); margin-bottom: 8px; padding-left: 0.5em;
+}
+.ros-logo-main {
+  font-family: var(--title); font-weight: 900; text-transform: uppercase;
+  font-size: clamp(48px, 11vw, 132px); letter-spacing: 0.04em;
+  background: linear-gradient(180deg, #fff3e8 0%, #ffb27a 38%, #e0261a 62%, #5a0508 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 4px 22px rgba(255, 40, 20, 0.45));
+  animation: ros-breathe 4s ease-in-out infinite;
+}
+@keyframes ros-breathe { 50% { filter: drop-shadow(0 4px 34px rgba(255, 60, 20, 0.75)); } }
+.ros-tag { margin: 18px 0 28px; color: var(--muted); font-family: var(--title); letter-spacing: 0.12em; }
+.ros-fine { position: absolute; bottom: 14px; margin: 0; font-size: 12px; color: #7d6058; letter-spacing: 0.06em; }
+.ros-sub { margin: 4px 0 22px; color: var(--muted); max-width: 520px; line-height: 1.5; }
+.ros-screen h2 {
+  margin: 0; font-family: var(--title); font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em;
+  font-size: clamp(30px, 6vw, 56px); color: #fff0e6; text-shadow: 0 0 24px rgba(255, 50, 20, 0.6);
+}
+
+.ros-menu { display: flex; flex-direction: column; gap: 10px; min-width: min(280px, 100%); }
+.ros-menu.row { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+.ros-btn {
+  position: relative; padding: 12px 28px; border: 1px solid var(--line); border-radius: 2px;
+  background: linear-gradient(180deg, rgba(60, 10, 12, 0.85), rgba(24, 6, 8, 0.9));
+  font-family: var(--title); font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; font-size: 15px;
+  cursor: pointer; transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0 50%);
+}
+.ros-btn:hover { border-color: var(--ember); transform: translateY(-1px); box-shadow: 0 0 22px rgba(255, 60, 20, 0.35); }
+.ros-btn.primary { background: linear-gradient(180deg, #d4241a, #7a0a0c); border-color: #ff6a3a; font-size: 18px; padding: 14px 34px; }
+.ros-btn.ghost { background: transparent; }
+.ros-btn:disabled { opacity: 0.6; cursor: wait; transform: none; }
+.ros-credits a { color: #ffb27a; }
+
+.ros-info {
+  margin-top: 18px; max-width: 560px; width: 100%; text-align: left;
+  border: 1px solid var(--line); background: rgba(12, 4, 5, 0.85); padding: 14px 18px; font-size: 14px; line-height: 1.55;
+}
+.ros-info ul { margin: 0; padding-left: 18px; }
+.ros-info b { color: var(--gold); font-weight: 600; }
+.ros-info p { margin: 10px 0 0; color: var(--muted); }
+.ros-settings { display: grid; gap: 10px; }
+.ros-settings label { display: flex; align-items: center; gap: 10px; }
+.ros-settings select { margin-left: auto; background: #1a0a0b; color: var(--ink); border: 1px solid var(--line); padding: 4px 6px; }
+
+/* Story intro: comic-ink panel. */
+.ros-intro { cursor: pointer; background: rgba(4, 1, 2, 0.94); }
+.ros-panel-ink {
+  max-width: 760px; padding: 36px 32px; border: 3px solid #f2e6dc; background: #0b0606;
+  box-shadow: 10px 10px 0 #7a0a0c; transform: rotate(-0.6deg);
+  animation: ros-panel 0.5s cubic-bezier(.2, 1.4, .4, 1);
+}
+.ros-panel-ink p { margin: 0; font-family: var(--title); font-size: clamp(18px, 3vw, 28px); line-height: 1.45; letter-spacing: 0.02em; }
+@keyframes ros-panel { from { transform: scale(0.85) rotate(-3deg); opacity: 0; } }
+.ros-intro-foot { position: absolute; bottom: 20px; display: flex; gap: 18px; align-items: center; color: var(--muted); font-size: 13px; }
+
+/* Reward cards. */
+.ros-cards { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; max-width: 960px; }
+.ros-card {
+  width: min(270px, 100%); padding: 18px 18px 20px; text-align: center; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c) 14%, #0d0606), #0b0506 70%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6) inset; transition: transform 0.15s ease, box-shadow 0.15s ease;
+  animation: ros-cardin 0.35s ease both;
+}
+.ros-card:nth-child(2) { animation-delay: 0.06s; }
+.ros-card:nth-child(3) { animation-delay: 0.12s; }
+@keyframes ros-cardin { from { transform: translateY(18px); opacity: 0; } }
+.ros-card:hover { transform: translateY(-4px); box-shadow: 0 0 34px color-mix(in srgb, var(--c) 45%, transparent); }
+.ros-card small { display: block; color: var(--c); text-transform: uppercase; letter-spacing: 0.16em; font-size: 11px; }
+.ros-card h3 { margin: 6px 0 8px; font-family: var(--title); font-size: 20px; }
+.ros-card p { margin: 0; color: #d9c7c0; font-size: 14px; line-height: 1.5; }
+.ros-card em { display: block; margin-top: 10px; color: #ff7a6a; font-style: normal; font-size: 12px; }
+.ros-icon { width: 76px; height: 76px; display: block; margin: 0 auto 6px; }
+
+.ros-stats { display: flex; gap: 14px; margin-bottom: 26px; flex-wrap: wrap; justify-content: center; }
+.ros-stats div { min-width: 104px; padding: 12px 10px; border: 1px solid var(--line); background: rgba(14, 4, 5, 0.8); }
+.ros-stats b { display: block; font-family: var(--hud); font-size: 30px; color: var(--gold); }
+.ros-stats span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; }
+.ros-end.dead h2 { color: #ff4a3a; }
+
+.ros-bosscard {
+  position: absolute; left: 0; right: 0; top: 30%; z-index: 15; text-align: center; pointer-events: none;
+  animation: ros-boss 2.9s ease both;
+}
+.ros-bosscard small { font-family: var(--title); letter-spacing: 0.4em; text-transform: uppercase; color: var(--gold); font-size: clamp(12px, 2vw, 16px); }
+.ros-bosscard h2 {
+  margin: 6px 0 0; font-family: var(--title); font-weight: 900; text-transform: uppercase;
+  font-size: clamp(30px, 6.5vw, 72px); color: #fff; letter-spacing: 0.05em;
+  text-shadow: 0 0 30px rgba(255, 40, 20, 0.8), 0 4px 0 #5a0508;
+}
+@keyframes ros-boss { 0% { opacity: 0; letter-spacing: 0.5em; } 15%, 80% { opacity: 1; } 100% { opacity: 0; } }
+
+.ros-pausebtn {
+  position: absolute; z-index: 12; top: 12px; right: 14px; width: 34px; height: 34px; border: 1px solid var(--line);
+  background: rgba(10, 4, 5, 0.6); cursor: pointer; font-size: 12px;
+}
+
+/* ── HUD ─────────────────────────────────────────────────────────────── */
+.ros-hud { position: absolute; inset: 0; pointer-events: none; z-index: 10; font-family: var(--hud); }
+.rs-tl { position: absolute; top: 14px; left: 16px; width: min(330px, 46vw); display: grid; gap: 6px; }
+.rs-hp { position: relative; height: 18px; background: rgba(20, 4, 5, 0.8); border: 1px solid rgba(255, 80, 60, 0.4); transform: skewX(-12deg); overflow: hidden; }
+.rs-hp i { position: absolute; top: 0; bottom: 0; left: 0; }
+.rs-hp-lag { background: #f2e4d8; opacity: 0.6; }
+.rs-hp-fill { background: linear-gradient(180deg, #ff3a2a, #9a0a10); box-shadow: 0 0 12px rgba(255, 40, 20, 0.6); transition: width 0.08s; }
+.rs-hp-fill.low { animation: rs-low 0.6s ease-in-out infinite alternate; }
+@keyframes rs-low { to { filter: brightness(1.7); } }
+.rs-hp-text { position: absolute; right: 8px; top: -1px; font-size: 14px; font-weight: 600; transform: skewX(12deg); text-shadow: 0 1px 2px #000; }
+.rs-wrath { position: relative; height: 9px; width: 82%; background: rgba(20, 8, 2, 0.8); border: 1px solid rgba(255, 140, 40, 0.35); transform: skewX(-12deg); }
+.rs-wrath i { position: absolute; top: 0; bottom: 0; left: 0; background: linear-gradient(90deg, #7a2a04, #ff8a1a); }
+.rs-wrath-text { position: absolute; left: calc(100% + 8px); top: -5px; font-size: 12px; letter-spacing: 0.14em; color: #b07a4a; transform: skewX(12deg); white-space: nowrap; }
+.rs-wrath-text b { display: inline-block; padding: 0 4px; border: 1px solid currentColor; margin-left: 2px; }
+.rs-wrath.full { border-color: #ffb04a; box-shadow: 0 0 14px rgba(255, 120, 20, 0.8); animation: rs-full 0.5s ease-in-out infinite alternate; }
+.rs-wrath.full .rs-wrath-text { color: #ffcf7a; }
+@keyframes rs-full { to { box-shadow: 0 0 26px rgba(255, 140, 20, 1); } }
+.rs-wrath.active i { background: linear-gradient(90deg, #ff3a0a, #ffe07a); }
+.rs-row { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
+.rs-ammo { display: flex; gap: 2px; }
+.rs-ammo i { width: 5px; height: 14px; border-radius: 3px 3px 1px 1px; background: rgba(255, 255, 255, 0.12); }
+.rs-ammo i.on { background: linear-gradient(180deg, #ffe7a8, #c9922a); }
+.rs-ammo i.on.gold { background: linear-gradient(180deg, #fff6c8, #ffcf3a); box-shadow: 0 0 6px #ffcf3a; }
+.rs-dash { display: flex; gap: 4px; }
+.rs-dash i { width: 12px; height: 12px; transform: rotate(45deg); border: 1px solid #7fa8c8; }
+.rs-dash i.on { background: #cfe8ff; box-shadow: 0 0 8px #7fd0ff; }
+.rs-special {
+  --cd: 360deg; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  background: conic-gradient(#ff3a3a var(--cd), rgba(255, 255, 255, 0.1) 0); font-size: 11px; font-weight: 700;
+}
+.rs-special span { width: 18px; height: 18px; border-radius: 50%; background: #120506; display: grid; place-items: center; }
+.rs-special.ready { box-shadow: 0 0 10px #ff3a3a; }
+.rs-boons { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 2px; }
+.rs-boons i { width: 26px; height: 26px; border: 1px solid; background-size: cover; background-color: rgba(10, 4, 5, 0.7); pointer-events: auto; }
+
+.rs-tr { position: absolute; top: 14px; right: 60px; text-align: right; }
+.rs-souls { font-size: 22px; font-weight: 600; color: #bff4ff; display: flex; align-items: center; gap: 6px; justify-content: flex-end; text-shadow: 0 0 10px rgba(120, 220, 255, 0.6); }
+.rs-souls i { width: 12px; height: 12px; border-radius: 50%; background: radial-gradient(circle at 40% 40%, #fff, #6fdcff 60%, transparent); box-shadow: 0 0 10px #6fdcff; }
+.rs-roomlbl { font-size: 14px; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; }
+
+.rs-rank { --rank: #8f8a86; position: absolute; right: 22px; top: 22%; width: 170px; text-align: right; transition: opacity 0.4s; }
+.rs-rank.idle { opacity: 0.25; }
+.rs-rank-letter {
+  font-family: var(--title); font-weight: 900; font-style: italic; font-size: 76px; line-height: 0.95; color: var(--rank);
+  text-shadow: 0 0 22px var(--rank), 3px 3px 0 #000;
+}
+.rs-rank[data-rank="6"] .rs-rank-letter { font-size: 62px; animation: rs-sss 0.25s linear infinite alternate; }
+@keyframes rs-sss { to { text-shadow: 0 0 36px var(--rank), -3px 3px 0 #000; } }
+.rs-rank-name { font-size: 18px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--rank); font-weight: 600; }
+.rs-rank-bar { height: 4px; margin-top: 4px; margin-left: auto; width: 140px; background: rgba(255, 255, 255, 0.12); }
+.rs-rank-bar i { display: block; height: 100%; margin-left: auto; background: var(--rank); box-shadow: 0 0 8px var(--rank); }
+.rs-rank.pop .rs-rank-letter { animation: rs-pop 0.35s cubic-bezier(.2, 1.8, .4, 1); }
+@keyframes rs-pop { from { transform: scale(1.8) rotate(-8deg); filter: brightness(2.5); } }
+
+.rs-boss { position: absolute; left: 50%; bottom: 38px; width: min(640px, 80vw); transform: translateX(-50%); opacity: 0; transition: opacity 0.4s; text-align: center; }
+.rs-boss.on { opacity: 1; }
+.rs-boss-name { font-family: var(--title); font-size: 17px; letter-spacing: 0.24em; text-transform: uppercase; color: #ffdccf; margin-bottom: 6px; text-shadow: 0 0 10px #ff2a10; }
+.rs-boss-bar { position: relative; height: 12px; background: rgba(20, 4, 5, 0.85); border: 1px solid rgba(255, 100, 60, 0.5); }
+.rs-boss-bar i { position: absolute; top: 0; bottom: 0; left: 0; }
+.rs-boss-lag { background: #ffd0b8; opacity: 0.5; }
+.rs-boss-fill { background: linear-gradient(180deg, #ff5a2a, #8a0a0c); box-shadow: 0 0 12px rgba(255, 60, 20, 0.7); }
+
+.rs-reload { position: absolute; left: 50%; bottom: 22%; width: 140px; height: 8px; margin-left: -70px; background: rgba(0, 0, 0, 0.6); border: 1px solid rgba(255, 255, 255, 0.3); opacity: 0; transition: opacity 0.1s; }
+.rs-reload.on { opacity: 1; }
+.rs-reload-zone { position: absolute; top: 0; bottom: 0; background: #ffcf3a; box-shadow: 0 0 10px #ffcf3a; }
+.rs-reload-mark { position: absolute; top: -4px; bottom: -4px; width: 3px; background: #fff; margin-left: -1px; }
+.rs-reload-hint { position: absolute; left: calc(100% + 8px); top: -5px; font-size: 13px; color: #ffcf3a; }
+
+.rs-toasts { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.rs-toast {
+  font-family: var(--title); font-weight: 900; font-size: clamp(18px, 3vw, 28px); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--c); text-shadow: 0 0 18px var(--c), 2px 2px 0 #000; animation: rs-toast 1.5s ease both; white-space: nowrap;
+}
+@keyframes rs-toast { 0% { transform: scale(1.6); opacity: 0; } 12% { transform: scale(1); opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-14px); } }
+
+.rs-hurt { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse at center, transparent 45%, rgba(200, 0, 0, 0.55)); }
+.rs-hurt.on { animation: rs-hurt 0.5s ease-out; }
+@keyframes rs-hurt { from { opacity: 1; } to { opacity: 0; } }
+.rs-lb { position: absolute; left: 0; right: 0; height: 0; background: #000; transition: height 0.35s ease; }
+.rs-lb-top { top: 0; } .rs-lb-bot { bottom: 0; }
+.rs-lb.on { height: 11vh; }
+.rs-inkflash { position: absolute; inset: 0; opacity: 0; background: #fff; mix-blend-mode: difference; }
+.rs-inkflash.on { animation: rs-ink 0.18s steps(2) forwards; }
+@keyframes rs-ink { 0% { opacity: 0.8; } 100% { opacity: 0; } }
+.rs-wrathflash { position: absolute; inset: 0; opacity: 0; background: radial-gradient(circle, rgba(255, 140, 20, 0.6), rgba(120, 10, 0, 0.8)); }
+.rs-wrathflash.on { animation: rs-hurt 0.8s ease-out; }
+.rs-fade { position: absolute; inset: 0; background: #000; opacity: 0; transition: opacity 0.45s ease; }
+.rs-fade.on { opacity: 1; }
+
+/* ── Touch controls ──────────────────────────────────────────────────── */
+.ros-touch { position: absolute; inset: 0; z-index: 11; pointer-events: none; }
+.ros-stickzone { position: absolute; left: 0; bottom: 0; width: 45%; height: 70%; pointer-events: auto; }
+.ros-stick { position: absolute; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.25); background: rgba(0, 0, 0, 0.25); opacity: 0; left: 90px; top: 70%; transition: opacity 0.15s; }
+.ros-stick.on { opacity: 1; }
+.ros-knob { position: absolute; left: 30px; top: 30px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255, 255, 255, 0.35); }
+.ros-buttons { position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); width: 230px; height: 210px; pointer-events: none; }
+.ros-tbtn {
+  position: absolute; pointer-events: auto; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.35);
+  background: rgba(20, 6, 8, 0.55); font-family: var(--hud); font-weight: 700; font-size: 13px; letter-spacing: 0.06em;
+  width: 62px; height: 62px; touch-action: none; text-transform: uppercase;
+}
+.ros-tbtn:active { background: rgba(255, 60, 30, 0.5); }
+.ros-tbtn.slash { right: 0; bottom: 0; width: 92px; height: 92px; font-size: 16px; border-color: rgba(255, 120, 100, 0.7); }
+.ros-tbtn.shoot { right: 100px; bottom: 0; }
+.ros-tbtn.dash { right: 6px; bottom: 100px; border-color: rgba(140, 200, 255, 0.6); }
+.ros-tbtn.parry { right: 76px; bottom: 72px; border-color: rgba(255, 220, 120, 0.7); }
+.ros-tbtn.special { right: 168px; bottom: 56px; width: 54px; height: 54px; font-size: 11px; }
+.ros-tbtn.wrath { right: 120px; bottom: 140px; width: 54px; height: 54px; font-size: 11px; border-color: rgba(255, 140, 40, 0.7); }
+.ros-tpause { position: absolute; top: 10px; right: 12px; width: 36px; height: 36px; pointer-events: auto; border: 1px solid var(--line); background: rgba(10, 4, 5, 0.6); }
+
+@media (max-width: 700px) {
+  .rs-rank { top: 15%; width: 110px; right: 12px; }
+  .rs-rank-letter { font-size: 48px; }
+  .rs-rank-name { font-size: 12px; }
+  .rs-rank-bar { width: 90px; }
+  .rs-tr { right: 56px; }
+  .rs-souls { font-size: 17px; }
+  .rs-roomlbl { font-size: 11px; }
+  .rs-wrath-text { display: none; }
+}
+@media (pointer: coarse) { .ros { cursor: default; } }
+@media (max-height: 480px) {
+  .ros-logo-main { font-size: clamp(40px, 9vw, 84px); }
+  .ros-tag { margin: 8px 0 14px; font-size: 13px; }
+  .ros-menu { gap: 6px; }
+  .ros-btn { padding: 8px 24px; font-size: 13px; }
+  .ros-btn.primary { padding: 10px 28px; font-size: 15px; }
+  .ros-fine { display: none; }
+  .ros-screen { justify-content: flex-start; padding-top: 18px; }
+  .ros-screen.ros-title, .ros-screen.ros-intro { justify-content: center; }
+}

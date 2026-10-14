@@ -35,6 +35,14 @@
       }
       .brick b { background: linear-gradient(180deg, #ffd36a, #ff5a1f 55%, #c4120a); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 3px 12px rgba(255, 60, 20, 0.6)); }
       .brick span { color: #e8b8a8; font-size: 13px; }
+      .stick {
+        background:
+          linear-gradient(115deg, transparent 46%, rgba(255, 255, 255, 0.85) 49%, rgba(150, 200, 255, 0.4) 51%, transparent 54%),
+          radial-gradient(ellipse at 50% 120%, rgba(255, 90, 20, 0.55), transparent 60%),
+          linear-gradient(180deg, #040203, #1a0507 60%, #3a0a06);
+      }
+      .stick b { font-family: Georgia, serif; font-style: normal; letter-spacing: 0.08em; background: linear-gradient(180deg, #fff3e8, #ffb27a 40%, #e0261a 65%, #5a0508); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 3px 14px rgba(255, 40, 20, 0.6)); }
+      .stick span { color: #e8c46a; font-size: 13px; letter-spacing: 0.3em; text-transform: uppercase; }
       .body { padding: 16px 18px 20px; }
       .body h2 { margin: 0 0 6px; font-size: 19px; }
       .body a { color: inherit; text-decoration: none; }
@@ -47,6 +55,16 @@
       <h1>Games</h1>
       <p class="lede">Browser games. Play on desktop or phone.</p>
       <ul class="grid">
+        <li class="card">
+          <div class="poster stick" aria-hidden="true">
+            <span>Rise of</span>
+            <b>Stickman</b>
+          </div>
+          <div class="body">
+            <h2><a href="./rise-of-stickman/">Rise of Stickman</a></h2>
+            <p>An isometric hack-and-slash roguelike. A fallen stickman Horseman fights out of the underworld with a katana and twin revolvers: style ranks, Wrath form, parries and a giant chained beast boss.</p>
+          </div>
+        </li>
         <li class="card">
           <div class="poster brick" aria-hidden="true">
             <b>Brick Blaster</b>

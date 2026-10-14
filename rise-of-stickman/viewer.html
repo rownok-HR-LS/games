@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Model viewer (dev)</title>
+    <style>
+      body { margin: 0; background: #120809; color: #eee; font: 13px system-ui; }
+      #ui { position: fixed; top: 8px; left: 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px; max-width: 98vw; }
+      #ui button { background: #2a1214; color: #eee; border: 1px solid #642; padding: 3px 7px; cursor: pointer; }
+      #info { position: fixed; bottom: 8px; left: 8px; white-space: pre; }
+    </style>
+  </head>
+  <body>
+    <div id="ui"></div>
+    <div id="info"></div>
+    <script type="module" src="./src/viewer.ts"></script>
+  </body>
+</html>

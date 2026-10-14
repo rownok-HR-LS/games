@@ -14,6 +14,7 @@ export default defineConfig({
       input: {
         home: resolve(__dirname, "index.html"),
         "brick-blaster": resolve(__dirname, "brick-blaster/index.html"),
+        "rise-of-stickman": resolve(__dirname, "rise-of-stickman/index.html"),
       },
     },
   },
