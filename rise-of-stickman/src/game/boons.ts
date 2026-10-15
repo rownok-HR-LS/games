@@ -3,11 +3,21 @@
 // power(id) is a blessing's strength multiplier (0 when not owned).
 import type { IconKind } from "./textures";
 
-export type Element = "fire" | "ice" | "lightning" | "shadow";
+export type Element = "fire" | "ice" | "lightning" | "shadow" | "blood" | "plague";
+export const ELEMENTS: Element[] = ["fire", "ice", "lightning", "shadow", "blood", "plague"];
 export type Slot = "blade" | "guns" | "dash" | "aux";
 export type Rarity = "common" | "rare" | "epic" | "heroic";
 
-export type Blessing = { id: string; element: Element; slot: Slot; name: string; text: string };
+export type Blessing = {
+  id: string;
+  element: Element;
+  slot: Slot;
+  name: string;
+  text: string;
+  /** Duo (two Lords) or Legendary blessings sit outside the four slots. */
+  kind?: "duo" | "legend";
+  pair?: [Element, Element];
+};
 export type Owned = Blessing & { rarity: Rarity; level: number };
 export type Relic = { id: string; name: string; boon: string; curse: string };
 export type Move = { id: string; name: string; text: string };
@@ -38,7 +48,50 @@ export const BLESSINGS: Blessing[] = [
   { id: "shadow_guns", element: "shadow", slot: "guns", name: "Phantom Rounds", text: "Bullets pass through enemies and hit everything in a line." },
   { id: "shadow_dash", element: "shadow", slot: "dash", name: "Ink Clone", text: "Dashing leaves an ink clone that explodes after a moment for 22 damage." },
   { id: "shadow_aux", element: "shadow", slot: "aux", name: "Soul Harvest", text: "Every kill heals you for 2." },
+
+  { id: "blood_blade", element: "blood", slot: "blade", name: "Crimson Edge", text: "Weapon hits make enemies Bleed: 3 damage a second per stack, up to 5 stacks." },
+  { id: "blood_guns", element: "blood", slot: "guns", name: "Leech Rounds", text: "Every 3rd bullet that hits heals you for 1." },
+  { id: "blood_dash", element: "blood", slot: "dash", name: "Red Mist", text: "Enemies you dash through Bleed (2 stacks), and each one heals you for 2." },
+  { id: "blood_aux", element: "blood", slot: "aux", name: "Last Stand", text: "Below 30% health you deal 40% more damage and take 20% less." },
+
+  { id: "plague_blade", element: "plague", slot: "blade", name: "Rot Edge", text: "Weapon hits Rot enemies for 4 s: they deal 25% less damage and take 15% more." },
+  { id: "plague_guns", element: "plague", slot: "guns", name: "Miasma Rounds", text: "Bullets leave a small poison cloud where they hit." },
+  { id: "plague_dash", element: "plague", slot: "dash", name: "Plague Wake", text: "Your dash leaves a trail of poison clouds." },
+  { id: "plague_aux", element: "plague", slot: "aux", name: "Pestilence", text: "Rotted enemies burst into a poison cloud when they die." },
 ];
+
+const duo = (id: string, a: Element, b: Element, name: string, text: string): Blessing => ({ id, element: a, slot: "aux", name, text, kind: "duo", pair: [a, b] });
+/** Duo blessings: offered by either Lord once you hold a blessing from both. */
+export const DUOS: Blessing[] = [
+  duo("thermal_shock", "fire", "ice", "Thermal Shock", "Fire hits on frozen enemies shatter the ice in a 40-damage explosion."),
+  duo("wildfire_storm", "fire", "lightning", "Wildfire Storm", "Chain lightning sets every enemy it jumps to on fire."),
+  duo("black_flame", "fire", "shadow", "Black Flame", "Shadow strikes ignite their target, and burning enemies are 15% more likely to take one."),
+  duo("boiling_blood", "fire", "blood", "Boiling Blood", "Bleeding enemies take 50% more burn damage."),
+  duo("pyre_of_rot", "fire", "plague", "Pyre of Rot", "Fire ignites poison clouds into a burst of flame."),
+  duo("superconductor", "ice", "lightning", "Superconductor", "Lightning leaps twice as far between chilled enemies and deals 50% more to frozen ones."),
+  duo("frozen_shade", "ice", "shadow", "Frozen Shade", "Ink Clone explosions freeze everything they hit."),
+  duo("frostbitten_veins", "ice", "blood", "Frostbitten Veins", "Frozen enemies Bleed three times faster, and every shatter heals you for 5."),
+  duo("cold_rot", "ice", "plague", "Cold Rot", "Poison clouds chill, and chilled enemies are Rotted."),
+  duo("dark_thunder", "lightning", "shadow", "Dark Thunder", "Shadow strikes call down a bolt of lightning on their target."),
+  duo("arterial_arc", "lightning", "blood", "Arterial Arc", "Chain lightning makes enemies Bleed and heals you 1 per jump."),
+  duo("contagion_arc", "lightning", "plague", "Contagion Arc", "Chain lightning spreads Rot to every enemy it jumps to."),
+  duo("night_feast", "shadow", "blood", "Night Feast", "Shadow-strike kills heal you for 4. Below half health, +10% shadow strike chance."),
+  duo("creeping_doom", "shadow", "plague", "Creeping Doom", "Ink Clones leave a poison cloud when they explode."),
+  duo("black_death", "blood", "plague", "Black Death", "Enemies that are both Bleeding and Rotted take double damage over time."),
+];
+
+const legend = (id: string, el: Element, name: string, text: string): Blessing => ({ id, element: el, slot: "aux", name, text, kind: "legend" });
+/** Legendary blessings: one per Lord, offered once you hold 2+ of that Lord's blessings. */
+export const LEGENDS: Blessing[] = [
+  legend("inferno_crown", "fire", "Inferno Crown", "Burning enemies explode when they die, scorching everything nearby for 30."),
+  legend("absolute_zero", "ice", "Absolute Zero", "Every 8 s, your next weapon hit freezes its target solid."),
+  legend("judgement_bolt", "lightning", "Judgement Bolt", "Every 5th weapon hit calls a bolt from the sky for 40 damage."),
+  legend("eclipse", "shadow", "Eclipse", "After a perfect dodge, your next 3 hits are guaranteed shadow strikes."),
+  legend("undying_thirst", "blood", "Undying Thirst", "Once per chamber, a killing blow leaves you at 30% health instead."),
+  legend("pandemic", "plague", "Pandemic", "When an enemy dies in a poison cloud, the cloud grows and spreads to its body."),
+];
+
+export const ALL_BLESSINGS: Blessing[] = [...BLESSINGS, ...DUOS, ...LEGENDS];
 
 export const RELICS: Relic[] = [
   { id: "pact", name: "Pact of Blood", boon: "+40% damage.", curse: "You can no longer heal." },
@@ -61,6 +114,8 @@ export const ELEMENT_COLOR: Record<Element, string> = {
   ice: "#7fe3ff",
   lightning: "#ffe14a",
   shadow: "#b06bff",
+  blood: "#ff2a46",
+  plague: "#9be05a",
 };
 
 // ── Rooms and rewards ─────────────────────────────────────────────────────────────────
@@ -139,16 +194,19 @@ export type Mods = {
 
 export class Loadout {
   slots: Partial<Record<Slot, Owned>> = {};
+  /** Duo and Legendary blessings (outside the slots). */
+  extras: Owned[] = [];
   relics: Relic[] = [];
   moves = new Set<string>();
 
   has(id: string) {
     for (const b of Object.values(this.slots)) if (b?.id === id) return true;
+    if (this.extras.some((b) => b.id === id)) return true;
     return this.relics.some((r) => r.id === id) || this.moves.has(id);
   }
 
   owned(): Owned[] {
-    return Object.values(this.slots).filter((b): b is Owned => !!b);
+    return [...Object.values(this.slots).filter((b): b is Owned => !!b), ...this.extras];
   }
 
   /** Strength multiplier of a blessing (0 if not owned). */
@@ -158,7 +216,14 @@ export class Loadout {
   }
 
   take(b: Blessing, rarity: Rarity) {
-    this.slots[b.slot] = { ...b, rarity, level: 1 };
+    if (b.kind) {
+      if (!this.extras.some((x) => x.id === b.id)) this.extras.push({ ...b, rarity, level: 1 });
+    } else this.slots[b.slot] = { ...b, rarity, level: 1 };
+  }
+
+  /** Base blessings held from a Lord. */
+  countOf(el: Element) {
+    return Object.values(this.slots).filter((b) => b?.element === el).length;
   }
 
   levelUp(id: string) {
@@ -194,11 +259,19 @@ export class Loadout {
     return m;
   }
 
-  /** Three blessing offers of an element (skipping ones already held at the same slot). */
+  /**
+   * Three offers from a Lord. Duos (you hold a blessing from both Lords) and the Legendary (you hold 2+
+   * of this Lord's) can take one of the places.
+   */
   offerBlessings(el: Element): Blessing[] {
-    return BLESSINGS.filter((b) => b.element === el && this.slots[b.slot]?.id !== b.id)
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 3);
+    const base = BLESSINGS.filter((b) => b.element === el && this.slots[b.slot]?.id !== b.id).sort(() => Math.random() - 0.5);
+    const special = [
+      ...DUOS.filter((d) => d.pair!.includes(el) && !this.has(d.id) && d.pair!.every((p) => this.countOf(p) > 0)),
+      ...LEGENDS.filter((l) => l.element === el && !this.has(l.id) && this.countOf(el) >= 2),
+    ].sort(() => Math.random() - 0.5);
+    const out = base.slice(0, 3);
+    if (special.length && Math.random() < 0.45) out[Math.min(out.length, 2)] = special[0];
+    return out.filter(Boolean);
   }
   offerRelics(): Relic[] {
     return RELICS.filter((r) => !this.relics.some((x) => x.id === r.id))

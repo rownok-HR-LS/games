@@ -9,6 +9,11 @@ const CRYSTAL = `<path d="M0 -5 L3 0 L0 5 L-3 0z" fill="currentColor" fill-opaci
 const BOLT = (d: string) => `<path d="${d}" stroke-width="2.8"/>`;
 const STICK = `<circle cx="0" cy="-12" r="3.6"/><path d="M0 -8 L0 3 M0 3 L-5 12 M0 3 L5 12 M0 -5 L-7 -1 M0 -5 L6 1"/>`;
 const SNOWFLAKE = `<g><path d="M0 -13 V13 M-11.3 -6.5 L11.3 6.5 M-11.3 6.5 L11.3 -6.5"/><path d="M-3 -10 L0 -7 L3 -10 M-3 10 L0 7 L3 10 M-10.2 -2.4 L-6 -3.5 L-7.3 -7.6 M10.2 2.4 L6 3.5 L7.3 7.6 M-7.3 7.6 L-6 3.5 L-10.2 2.4 M7.3 -7.6 L6 -3.5 L10.2 -2.4"/></g>`;
+const DROP = `<path d="M0 -9 q7 8 7 13 a7 7 0 0 1 -14 0 q0 -5 7 -13z" fill="currentColor" fill-opacity=".45"/>`;
+const PUFF = `<path d="M-12 4 a5 5 0 0 1 2 -9 a7 7 0 0 1 13 -2 a5 5 0 0 1 8 6 a4 4 0 0 1 -2 5z" fill="currentColor" fill-opacity=".25"/>`;
+const SKULL = `<path d="M-8 -2 a8 9 0 1 1 16 0 v5 h-3 v3 h-10 v-3 h-3z" fill="currentColor" fill-opacity=".2"/><circle cx="-3.5" cy="-2" r="2" fill="currentColor"/><circle cx="3.5" cy="-2" r="2" fill="currentColor"/>`;
+const HEART = `<path d="M0 10 c-14 -9 -14 -20 -6 -21 c3 0 5 2 6 4 c1 -2 3 -4 6 -4 c8 1 8 12 -6 21z" fill="currentColor" fill-opacity=".3"/>`;
+const CHEV = `<path d="M2 -10 L12 0 L2 10 M-8 -10 L2 0 L-8 10"/>`;
 const at = (x: number, y: number, s: string, cls = "", style = "", scale = 1) => `<g transform="translate(${x} ${y}) scale(${scale})"><g class="${cls}" style="${style}">${s}</g></g>`;
 
 const ART: Record<string, string> = {
@@ -32,6 +37,39 @@ const ART: Record<string, string> = {
   shadow_guns: `<path d="M-12 -12 v24 M0 -12 v24 M12 -12 v24" stroke-opacity=".45" stroke-dasharray="3 3"/><g class="sg-pierce">${at(0, 0, BULLET)}</g>`,
   shadow_dash: `${at(6, 2, STICK)}${at(-10, 2, STICK, "sg-clone")}`,
   shadow_aux: `<path d="M-8 -2 a8 9 0 1 1 16 0 v5 h-3 v3 h-10 v-3 h-3z" fill="currentColor" fill-opacity=".2"/><circle cx="-3.5" cy="-2" r="2" fill="currentColor"/><circle cx="3.5" cy="-2" r="2" fill="currentColor"/><g class="sg-orbit"><circle cx="0" cy="-19" r="2.6" fill="currentColor"/><circle cx="16" cy="10" r="2" fill="currentColor"/><circle cx="-16" cy="10" r="2.2" fill="currentColor"/></g>`,
+  // ── Blood ──
+  blood_blade: `${KATANA}${at(-6, 6, DROP, "sg-drip")}${at(6, -4, DROP, "sg-drip", "animation-delay:-.6s")}`,
+  blood_guns: `<g class="sg-slide">${at(-6, 0, BULLET)}</g>${at(16, 0, `<g transform="scale(.55)">${HEART}</g>`, "sg-pulse")}`,
+  blood_dash: `<g class="sg-slide-s">${CHEV}</g>${at(-14, 6, DROP, "sg-drip")}${at(-20, -4, DROP, "sg-drip", "animation-delay:-.5s")}`,
+  blood_aux: `${at(0, 2, `${HEART}<path d="M-2 -8 l3 6 l-3 4 l2 6" stroke-width="1.8"/>`, "sg-pulse")}`,
+  // ── Plague ──
+  plague_blade: `${KATANA}${at(-6, 4, `<circle r="2.4" fill="currentColor"/>`, "sg-twinkle")}${at(4, -6, `<circle r="1.8" fill="currentColor"/>`, "sg-twinkle", "animation-delay:-.5s")}${at(11, -12, `<circle r="2.2" fill="currentColor"/>`, "sg-twinkle", "animation-delay:-1s")}`,
+  plague_guns: `<g class="sg-slide">${at(-6, 0, BULLET)}</g>${at(16, 2, `<g transform="scale(.7)">${PUFF}</g>`, "sg-ripple")}`,
+  plague_dash: `<g class="sg-slide-s">${CHEV}</g>${at(-16, 6, `<g transform="scale(.6)">${PUFF}</g>`, "sg-pulse")}${at(-20, -6, `<g transform="scale(.45)">${PUFF}</g>`, "sg-pulse", "animation-delay:-1s")}`,
+  plague_aux: `${SKULL}<g class="sg-orbit">${at(0, -18, `<g transform="scale(.5)">${PUFF}</g>`)}${at(15, 10, `<g transform="scale(.4)">${PUFF}</g>`)}${at(-15, 10, `<g transform="scale(.45)">${PUFF}</g>`)}</g>`,
+  // ── Duos ──
+  thermal_shock: `${at(-6, 0, `<g transform="scale(.7)">${SNOWFLAKE}</g>`, "sg-spin-slow")}${at(9, 8, FLAME, "sg-flicker")}${at(0, 0, `<path d="M0 -10 L2 -3 L9 0 L2 3 L0 10 L-2 3 L-9 0 L-2 -3z" fill="currentColor" fill-opacity=".5"/>`, "sg-burst")}`,
+  wildfire_storm: `${BOLT("M-4 -18 L4 -6 L-2 -4 L6 8")}${at(-10, 14, FLAME, "sg-flicker")}${at(8, 14, FLAME, "sg-flicker", "animation-delay:-.4s")}`,
+  black_flame: `${at(0, 8, `<path d="M0 0 c-8 -5 -7 -15 0 -22 c2 6 9 9 8 16 c0 4 -4 6 -8 6z" fill="currentColor" fill-opacity=".45"/>`, "sg-flicker")}<path d="M-14 -4 q14 -12 28 0 q-14 12 -28 0z" stroke-opacity=".8"/><circle r="2.6" cy="-4" fill="currentColor"/>`,
+  boiling_blood: `${at(0, 4, `<g transform="scale(1.4)">${DROP}</g>`)}${at(-3, -2, `<circle r="1.8"/>`, "sg-drip", "animation-direction:reverse")}${at(3, 2, `<circle r="1.4"/>`, "sg-drip", "animation-direction:reverse;animation-delay:-.6s")}${at(0, 14, FLAME, "sg-flicker")}`,
+  pyre_of_rot: `${PUFF}${at(0, 6, FLAME, "sg-flicker")}${at(-10, 8, `<g transform="scale(.6)">${FLAME}</g>`, "sg-flicker", "animation-delay:-.3s")}`,
+  superconductor: `${at(-14, 0, CRYSTAL, "sg-twinkle")}${at(14, 0, CRYSTAL, "sg-twinkle", "animation-delay:-.7s")}${at(0, 0, BOLT("M-10 0 L-4 -5 L0 3 L5 -4 L10 0"), "sg-flash")}`,
+  frozen_shade: `${at(4, 2, STICK, "sg-clone")}${at(-10, -10, `<g transform="scale(.55)">${SNOWFLAKE}</g>`, "sg-spin")}`,
+  frostbitten_veins: `${at(0, -2, `<g transform="scale(2)">${CRYSTAL}</g>`, "sg-twinkle")}${at(-6, 12, DROP, "sg-drip")}${at(6, 12, DROP, "sg-drip", "animation-delay:-.7s")}`,
+  cold_rot: `${at(0, 4, PUFF, "sg-pulse")}${at(0, -10, `<g transform="scale(.6)">${SNOWFLAKE}</g>`, "sg-spin-slow")}`,
+  dark_thunder: `${at(-6, -6, `<path d="M4 -10 a10 10 0 1 0 8 14 a7 7 0 1 1 -8 -14z" fill="currentColor" fill-opacity=".35"/>`, "sg-pulse")}${at(4, 0, BOLT("M2 -10 L-4 2 L2 2 L-3 16"), "sg-strike")}`,
+  arterial_arc: `${BOLT("M-16 -10 L-6 0 L-10 3 L4 12")}${at(8, -8, DROP, "sg-drip")}${at(14, 2, DROP, "sg-drip", "animation-delay:-.5s")}`,
+  contagion_arc: `${BOLT("M-16 -6 L-6 4 L-10 6 L6 14")}${at(-14, -12, `<circle r="2.4" fill="currentColor"/>`, "sg-twinkle")}${at(10, 8, `<circle r="2.4" fill="currentColor"/>`, "sg-twinkle", "animation-delay:-.4s")}${at(14, -6, `<circle r="2.4" fill="currentColor"/>`, "sg-twinkle", "animation-delay:-.8s")}`,
+  night_feast: `<path d="M-6 -16 a16 16 0 1 0 16 22 a12 12 0 1 1 -16 -22z" fill="currentColor" fill-opacity=".25"/>${at(4, 2, DROP, "sg-drip")}<path d="M-4 -2 l2 6 l2 -6" stroke-width="1.8"/>`,
+  creeping_doom: `${at(-4, 0, STICK, "sg-clone")}${at(8, 10, `<g transform="scale(.7)">${PUFF}</g>`, "sg-ripple")}`,
+  black_death: `${at(0, -4, SKULL)}${at(-10, 12, DROP, "sg-drip")}${at(10, 12, `<circle r="2.4" fill="currentColor"/>`, "sg-twinkle")}`,
+  // ── Legendaries ──
+  inferno_crown: `${at(0, 6, `<path d="M-15 8 L-15 -6 L-8 2 L0 -10 L8 2 L15 -6 L15 8z" fill="currentColor" fill-opacity=".25"/>`)}${at(-8, -2, FLAME, "sg-flicker")}${at(0, -8, FLAME, "sg-flicker", "animation-delay:-.3s")}${at(8, -2, FLAME, "sg-flicker", "animation-delay:-.6s")}`,
+  absolute_zero: `${at(0, 0, SNOWFLAKE, "sg-spin-slow")}${at(0, 0, `<circle r="20" stroke-opacity=".6"/>`, "sg-pulse")}`,
+  judgement_bolt: `<path d="M-14 -12 a6 6 0 0 1 4 -10 a8 8 0 0 1 15 -1 a6 6 0 0 1 9 6 a5 5 0 0 1 -3 5z" fill="currentColor" fill-opacity=".2"/>${at(0, 0, BOLT("M1 -8 L-5 3 L1 3 L-4 18"), "sg-strike")}${at(-4, 19, `<ellipse rx="9" ry="2.5"/>`, "sg-ripple")}`,
+  eclipse: `<circle r="15" fill="currentColor" fill-opacity=".25"/>${at(5, -3, `<circle r="13" fill="rgba(8,3,4,.95)" stroke-opacity=".7"/>`, "sg-bob")}<circle r="19" stroke-dasharray="2 4" stroke-opacity=".6"/>`,
+  undying_thirst: `${at(0, 4, HEART, "sg-pulse")}${at(0, -14, `<ellipse rx="10" ry="3"/>`, "sg-bob")}`,
+  pandemic: `${at(0, 2, PUFF, "sg-pulse")}${at(0, 0, `<circle r="12" stroke-opacity=".6"/>`, "sg-ripple")}${at(0, 0, `<circle r="12" stroke-opacity=".6"/>`, "sg-ripple", "animation-delay:-.9s")}`,
   // ── Cursed relics ──
   pact: `<path d="M-11 -14 h22 q0 14 -11 16 q-11 -2 -11 -16z M0 2 v10 M-7 14 h14"/>${at(0, -6, `<path d="M0 0 q-3 4 0 6 q3 -2 0 -6z" fill="currentColor"/>`, "sg-drip")}`,
   halo: `<g class="sg-bob"><ellipse rx="15" ry="5" cy="-6"/><path d="M-3 -11 l2 4 l-2 3" stroke-width="1.8"/></g>${at(0, 10, `<path d="M-6 0 h12" stroke-opacity=".5"/>`, "sg-pulse")}`,

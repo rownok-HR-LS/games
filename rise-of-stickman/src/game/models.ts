@@ -14,6 +14,8 @@ import lordFireUrl from "../assets/models/lord_fire.glb?url";
 import lordIceUrl from "../assets/models/lord_ice.glb?url";
 import lordStormUrl from "../assets/models/lord_storm.glb?url";
 import lordShadowUrl from "../assets/models/lord_shadow.glb?url";
+import lordBloodUrl from "../assets/models/lord_blood.glb?url";
+import lordPlagueUrl from "../assets/models/lord_plague.glb?url";
 import smithUrl from "../assets/models/smith.glb?url";
 import steedUrl from "../assets/models/steed.glb?url";
 import oracleUrl from "../assets/models/oracle.glb?url";
@@ -29,6 +31,8 @@ export type ModelKey =
   | "lord_ice"
   | "lord_storm"
   | "lord_shadow"
+  | "lord_blood"
+  | "lord_plague"
   | "smith"
   | "steed"
   | "oracle";
@@ -43,13 +47,15 @@ export const MODEL_URLS: Record<ModelKey, string> = {
   lord_ice: lordIceUrl,
   lord_storm: lordStormUrl,
   lord_shadow: lordShadowUrl,
+  lord_blood: lordBloodUrl,
+  lord_plague: lordPlagueUrl,
   smith: smithUrl,
   steed: steedUrl,
   oracle: oracleUrl,
 };
 
 /** Models needed in a run. Hub NPCs (smith, steed, oracle) load later via loadModels(HUB_MODELS). */
-export const RUN_MODELS: ModelKey[] = ["hound", "demon", "minotaur", "crywolf", "cerberus", "merchant", "lord_fire", "lord_ice", "lord_storm", "lord_shadow"];
+export const RUN_MODELS: ModelKey[] = ["hound", "demon", "minotaur", "crywolf", "cerberus", "merchant", "lord_fire", "lord_ice", "lord_storm", "lord_shadow", "lord_blood", "lord_plague"];
 export const HUB_MODELS: ModelKey[] = ["smith", "steed", "oracle"];
 
 const cache = new Map<ModelKey, GLTF>();

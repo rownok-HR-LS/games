@@ -45,6 +45,20 @@ export const LORDS: Record<Element, LordDef> = {
     greet: ["I too was betrayed. Take my shadow.", "Strike from where they cannot see.", "The dark keeps its promises. Unlike them."],
     part: ["Walk unseen, brother.", "Your vengeance is mine as well."],
   },
+  blood: {
+    name: "Vharkul",
+    title: "the Crimson Sovereign",
+    spec: { key: "lord_blood", height: 3.7, yaw: 0, glow: [0.05, 0.005, 0.01], clips: { idle: { name: "birdcage-378914" } } },
+    greet: ["Your blood sings, horseman. Let me teach it to feast.", "Drink deep. They have so much to spare.", "Pain is only blood leaving. Make theirs leave faster."],
+    part: ["Bleed them dry.", "Come back to me thirsty."],
+  },
+  plague: {
+    name: "Mortis",
+    title: "the Plague Saint",
+    spec: { key: "lord_plague", height: 3.4, yaw: 0, glow: [0.03, 0.06, 0.01], clips: { idle: { name: "Take 001" } } },
+    greet: ["Breathe in, little horseman. Rot is only patience.", "Every wound I touch festers. Let me touch theirs.", "The plague is a mercy. For you."],
+    part: ["Spread it far.", "Let them choke on it."],
+  },
 };
 
 export function lordName(el: Element) {
@@ -60,6 +74,8 @@ const RIM: Record<Element, [number, number, number]> = {
   ice: [0.45, 0.95, 1.8],
   lightning: [0.55, 0.48, 0.14],
   shadow: [0.75, 0.25, 1.5],
+  blood: [1.2, 0.05, 0.1],
+  plague: [0.45, 1.1, 0.15],
 };
 
 let sigilTex: THREE.Texture | null = null;
@@ -230,6 +246,14 @@ export class LordApparition {
           break;
         case "lightning":
           fx.emit({ x, y, z, vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.2) * 3, vz: (Math.random() - 0.5) * 3, color: this.c.setRGB(1.8, 1.6, 0.6), size: 0.035, life: 0.25 + Math.random() * 0.25, additive: true, drag: 3 });
+          break;
+        case "blood":
+          fx.emit({ x, y, z, vy: -0.6 - Math.random() * 0.6, color: this.c.setRGB(0.55, 0.0, 0.03), size: 0.06 + Math.random() * 0.04, life: 1.0, gravity: 4 });
+          if (Math.random() < 0.3) fx.emit({ x, y: Math.random() * 0.6, z, vy: 0.3, color: this.c.setRGB(0.3, 0.0, 0.02), alpha: 0.4, size: 0.5, grow: 0.6, life: 1.2, drag: 1 });
+          break;
+        case "plague":
+          fx.emit({ x, y: Math.random() * 0.9, z, vx: (Math.random() - 0.5) * 0.3, vy: 0.3 + Math.random() * 0.3, vz: (Math.random() - 0.5) * 0.3, color: this.c.setRGB(0.18, 0.32, 0.06), alpha: 0.45, size: 0.55, grow: 0.9, life: 1.6, drag: 1 });
+          if (Math.random() < 0.4) fx.emit({ x, y, z, vy: 0.4, color: this.c.setRGB(0.7, 1.6, 0.3), size: 0.04, life: 1.0, additive: true, drag: 0.5 });
           break;
         case "shadow":
           if (Math.random() < 0.5) fx.emit({ x, y: Math.random() * 0.8, z, vx: (Math.random() - 0.5) * 0.4, vy: 0.5 + Math.random() * 0.6, vz: (Math.random() - 0.5) * 0.4, color: this.c.setRGB(0.05, 0.01, 0.08), alpha: 0.5 * vis, size: 0.5, grow: 0.8, life: 1.2, drag: 1 });

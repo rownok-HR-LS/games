@@ -8,7 +8,8 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { Audio } from "./audio";
 import { Boss } from "./boss";
 import {
-  BLESSINGS,
+  ALL_BLESSINGS,
+  ELEMENTS,
   bumpRarity,
   ELEMENT_COLOR,
   LEVEL_STEP,
@@ -49,7 +50,6 @@ import { buildMedal, medalTexture, Room } from "./world";
 /** Chambers per floor: the last is the Warden (boss); the mini-boss waits halfway; the one before the boss is always merchant-or-fountain. */
 export const FLOOR_ROOMS = 12;
 export const MINIBOSS_ROOM = 6;
-const ELEMENTS: Element[] = ["fire", "ice", "lightning", "shadow"];
 export type Card = { id: string; name: string; text: string; icon: IconKind; color: string; tag: string; note?: string; rarity?: string };
 export type UiEvent =
   | { type: "choose"; title: string; cards: Card[]; lord?: boolean }
@@ -76,7 +76,11 @@ type Hazard =
   | { kind: "clone"; pos: THREE.Vector3; t: number }
   | { kind: "wave"; pos: THREE.Vector3; dir: THREE.Vector3; left: number; hit: Set<number>; color: THREE.Color }
   | { kind: "fountain"; obj: THREE.Object3D; t: number; scale: number }
-  | { kind: "blast"; pos: THREE.Vector3; t: number; tel: ReturnType<Fx["telegraph"]> };
+  | { kind: "blast"; pos: THREE.Vector3; t: number; tel: ReturnType<Fx["telegraph"]> }
+  | { kind: "cloud"; pos: THREE.Vector3; r: number; t: number; tick: number };
+
+/** Blood and Plague statuses on any target. */
+type Status = { bleed: number; bleedT: number; tick: number; rotT: number };
 
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
@@ -129,6 +133,14 @@ export class Game {
   private phaseT = 0;
   /** Room reward pickup: a floating medallion showing the reward's symbol. */
   private orb: THREE.Group | null = null;
+  /** Bleed / Rot per target id. */
+  private status = new Map<number, Status>();
+  private leechHits = 0;
+  private lastCloud = 0;
+  private boltHits = 0;
+  private zeroT = 0;
+  /** Undying Thirst used this chamber. */
+  undyingUsed = false;
   /** Bodies tumbling into the abyss. */
   private fallers: { obj: THREE.Object3D; vel: THREE.Vector3; spin: THREE.Vector3 }[] = [];
   private orbMedal: THREE.Group | null = null;
@@ -298,6 +310,8 @@ export class Game {
     this.hazards = [];
     if (this.orb) this.scene.remove(this.orb);
     this.orb = null;
+    this.status.clear();
+    this.undyingUsed = false;
     for (const f of this.fallers) this.scene.remove(f.obj);
     this.fallers = [];
     this.removeLord();
@@ -321,6 +335,7 @@ export class Game {
     this.clearRoom();
     this.roomNo = no;
     this.plan = plan;
+    this.undyingUsed = false;
     const type = plan.type;
     const fight = type === "combat" || type === "elite" || type === "abyss";
     const visit = type === "shop" || type === "fountain" || type === "armoury";
@@ -599,7 +614,20 @@ export class Game {
     const cards = this.loadout.offerBlessings(el).map((b) => {
       const rarity = rollRarity(min);
       this.pendingRarity.set(b.id, rarity);
-      const owned = this.loadout.slots[b.slot];
+      const owned = b.kind ? undefined : this.loadout.slots[b.slot];
+      if (b.kind) {
+        this.pendingRarity.set(b.id, "epic");
+        const other = b.pair ? b.pair.find((p) => p !== el) ?? b.pair[1] : null;
+        return {
+          id: b.id,
+          name: b.name,
+          text: b.text,
+          icon: b.element as IconKind,
+          color: ELEMENT_COLOR[b.element],
+          tag: b.kind === "duo" ? `Duo · ${LORDS[el].name} + ${LORDS[other!].name}` : `Legendary · ${LORDS[el].name}`,
+          rarity: b.kind === "duo" ? "#ffd24a" : "#ff8a1a",
+        };
+      }
       return {
         id: b.id,
         name: b.name,
@@ -616,7 +644,7 @@ export class Game {
 
   private offerLevelUp() {
     const owned = this.loadout.owned();
-    if (!owned.length) return this.offerBlessings(ELEMENTS[(Math.random() * 4) | 0], "rare");
+    if (!owned.length) return this.offerBlessings(ELEMENTS[(Math.random() * ELEMENTS.length) | 0], "rare");
     this.offer(
       "Ember Heart",
       owned.map((b) => ({
@@ -650,7 +678,7 @@ export class Game {
       return this.pickAspect(id.slice(4) as AspectId);
     }
     if (id.startsWith("lvl:")) this.loadout.levelUp(id.slice(4));
-    const b = BLESSINGS.find((x) => x.id === id);
+    const b = ALL_BLESSINGS.find((x) => x.id === id);
     const rl = RELICS.find((x) => x.id === id);
     const mv = MOVES.find((x) => x.id === id);
     if (b) this.loadout.take(b, this.pendingRarity.get(id) ?? "common");
@@ -875,7 +903,7 @@ export class Game {
     if (!doors.length) return;
     this.audio.door();
     const next = this.roomNo + 1;
-    if (this.roomNo === 0) return this.room.openDoor(doors[0], { type: "combat", reward: { kind: "blessing", element: ELEMENTS[(Math.random() * 4) | 0] } });
+    if (this.roomNo === 0) return this.room.openDoor(doors[0], { type: "combat", reward: { kind: "blessing", element: ELEMENTS[(Math.random() * ELEMENTS.length) | 0] } });
     if (next === FLOOR_ROOMS) return this.room.openDoor(doors[0], { type: "boss", reward: null });
     if (next === MINIBOSS_ROOM) return this.room.openDoor(doors[0], { type: "miniboss", reward: { kind: "move" } });
     if (next === FLOOR_ROOMS - 1) {
@@ -949,18 +977,60 @@ export class Game {
     if (!t.alive) return;
     const el = h.element;
     let dmg = h.dmg;
+    const L = this.loadout;
+    const weaponHit = !h.proc && (h.kind === "blade" || h.kind === "special" || h.kind === "execute");
     if (t.frozen() && (h.kind === "blade" || h.kind === "special")) dmg *= 1.5;
-    if (el && !h.proc && (h.kind === "blade" || h.kind === "special" || h.kind === "execute")) {
-      const pw = this.player.inWrath && el === "fire" ? 1 : Math.max(1, this.loadout.power(`${el}_blade`));
+    // Last Stand, Rot, Superconductor, Boiling Blood, Black Death.
+    if (L.has("blood_aux") && this.player.hp < this.player.maxHp * 0.3) dmg *= 1.4;
+    const st = this.status.get(t.id);
+    if (st && st.rotT > 0) dmg *= 1.15;
+    if (el === "lightning" && L.has("superconductor") && t.frozen()) dmg *= 1.5;
+    if (h.kind === "dot" && st) {
+      if (h.move === "burn" && st.bleed > 0 && L.has("boiling_blood")) dmg *= 1.5;
+      if (st.bleed > 0 && st.rotT > 0 && L.has("black_death")) dmg *= 2;
+    }
+    if (el && weaponHit) {
+      const pw = this.player.inWrath && el === "fire" ? 1 : Math.max(1, L.power(`${el}_blade`));
       if (el === "fire") t.ignite(8 * pw, 3);
       if (el === "ice") t.chill(pw >= 1.8 ? 2 : 1);
       if (el === "lightning") this.chainLightning(t, pw >= 1.4 ? 3 : 2, 9 * pw);
+      if (el === "blood") this.addBleed(t, pw >= 1.8 ? 2 : 1);
+      if (el === "plague") this.rot(t, 4);
+    }
+    // Thermal Shock: fire on a frozen enemy.
+    if (L.has("thermal_shock") && t.frozen() && (el === "fire" || burning(t)) && h.move !== "thermal") {
+      this.fx.ring(v1.set(t.pos.x, 0.1, t.pos.z), 0.2, 2.6, new THREE.Color(1.6, 1.2, 1.6), 0.35);
+      this.fx.sparks(v1.set(t.pos.x, t.chest, t.pos.z), new THREE.Color(1.2, 1.6, 2), 20, 7);
+      this.audio.shatter();
+      for (const u of this.targets())
+        if (u.pos.distanceTo(t.pos) < 2.6) this.damage(u, { dmg: 40 * this.mods.dmg, dir: v2.subVectors(u.pos, t.pos).setY(0).normalize().clone(), kind: "element", move: "thermal", element: "ice", proc: true, knock: 6 });
+    }
+    // Pyre of Rot: fire touches a poison cloud.
+    if (el === "fire" && L.has("pyre_of_rot")) this.igniteClouds(t.pos);
+    // Shadow strikes: Black Flame, Dark Thunder.
+    if (h.crit) {
+      if (L.has("black_flame")) t.ignite(10, 3);
+      if (L.has("dark_thunder") && h.move !== "darkthunder") this.skyBolt(t, 24, "darkthunder");
+    }
+    // Weapon-hit legendaries.
+    if (weaponHit) {
+      if (L.has("absolute_zero") && this.zeroT <= 0) {
+        t.freeze(2);
+        this.zeroT = 8;
+        this.fx.ring(v1.set(t.pos.x, 0.1, t.pos.z), 0.2, 2, ELEMENT_RGB.ice, 0.4);
+        this.audio.freeze();
+      }
+      if (L.has("judgement_bolt") && ++this.boltHits % 5 === 0) this.skyBolt(t, 40, "judgement");
     }
     const at = h.at ?? v1.set(t.pos.x, t.chest + t.air, t.pos.z).clone();
     const shieldOf = () => (t as { shield?: number }).shield ?? 0;
     const hp0 = t.hp;
     const sh0 = shieldOf();
+    const wasFrozen = t.frozen();
+    const wasBurning = burning(t);
+    const wasRotted = !!(st && st.rotT > 0);
     t.takeHit({ ...h, dmg });
+    if (!t.alive) this.onStatusDeath(t, h, wasFrozen, wasBurning, wasRotted);
     const dealt = Math.max(0, hp0 - Math.max(0, t.hp)) + Math.max(0, sh0 - shieldOf());
     if (dealt >= 0.5) {
       const style = sh0 > shieldOf() && hp0 === t.hp ? "shield" : h.crit ? "crit" : h.kind === "dot" || h.kind === "element" ? "dot" : h.kind === "gun" ? "gun" : h.heavy || h.kind === "execute" ? "heavy" : "";
@@ -997,7 +1067,7 @@ export class Game {
     let src = from;
     for (let i = 0; i < n; i++) {
       let best: Target | null = null;
-      let bd = 6;
+      let bd = this.loadout.has("superconductor") && chilled(src) ? 12 : 6;
       for (const t of this.targets()) {
         if (hit.has(t.id)) continue;
         const d = t.pos.distanceTo(src.pos);
@@ -1010,6 +1080,13 @@ export class Game {
       hit.add(best.id);
       this.fx.lightning(v1.set(src.pos.x, src.chest + src.air, src.pos.z).clone(), v2.set(best.pos.x, best.chest + best.air, best.pos.z).clone(), ELEMENT_RGB.lightning);
       this.audio.zap();
+      const L = this.loadout;
+      if (L.has("wildfire_storm")) best.ignite(6, 2);
+      if (L.has("arterial_arc")) {
+        this.addBleed(best, 1);
+        this.healFlat(1);
+      }
+      if (L.has("contagion_arc")) this.rot(best, 4);
       this.damage(best, { dmg: dmg * this.mods.dmg, dir: v2.subVectors(best.pos, src.pos).setY(0).normalize().clone(), kind: "element", move: "chain", element: "lightning", proc: true });
       src = best;
     }
@@ -1048,6 +1125,11 @@ export class Game {
       const at = v2.set(t.pos.x - dir.x * t.radius, origin.y, t.pos.z - dir.z * t.radius).clone();
       this.damage(t, { dmg: o.dmg + (o.lightning ? 12 : 0), dir, kind: "gun", move: o.lightning ? "thunder" : "gun", knock: 0.9, element: gunEl, at });
       if (gunEl === "ice") t.chill(1);
+      if (gunEl === "blood" && ++this.leechHits % 3 === 0) this.healFlat(1 * this.loadout.power("blood_guns"));
+      if (gunEl === "plague" && this.runTime - this.lastCloud > 0.3) {
+        this.lastCloud = this.runTime;
+        this.cloud(t.pos, 1.3, 2.5);
+      }
       if (gunEl === "fire") {
         this.fx.flash(at, ELEMENT_RGB.fire, 1.2, 0.12);
         this.fx.fire(at, 4, 0.5);
@@ -1074,7 +1156,7 @@ export class Game {
   }
 
   enemyAttack(src: Target, dmg: number, o: AttackOpts): AttackResult {
-    return this.player.receive(src, src.pos, dmg, o);
+    return this.player.receive(src, src.pos, this.isRotted(src) ? dmg * 0.75 : dmg, o);
   }
 
   dashThrough(t: Target, dir: THREE.Vector3) {
@@ -1085,6 +1167,11 @@ export class Game {
       this.fx.lightning(v1.set(this.player.pos.x, 1, this.player.pos.z).clone(), v2.set(t.pos.x, t.chest, t.pos.z).clone(), ELEMENT_RGB.lightning);
       this.audio.zap();
       this.damage(t, { dmg: 14 * l.power("lightning_dash") * this.mods.dmg, dir, kind: "element", move: "static", element: "lightning", proc: true });
+      hit = true;
+    }
+    if (l.has("blood_dash")) {
+      this.addBleed(t, 2);
+      this.healFlat(2 * l.power("blood_dash"));
       hit = true;
     }
     if (l.moves.has("phantom")) {
@@ -1183,6 +1270,10 @@ export class Game {
     this.audio.perfectDodge();
     this.style.add("dodge", 60);
     this.hud.toast("PERFECT DODGE", "#7fe3ff");
+    if (this.loadout.has("eclipse")) {
+      this.player.eclipse = 3;
+      this.hud.toast("ECLIPSE", "#b06bff");
+    }
     this.fx.ring(at, 0.3, 2.5, new THREE.Color(0.6, 1.6, 3), 0.4);
   }
 
@@ -1228,6 +1319,123 @@ export class Game {
     this.audio.hurt();
     this.fx.bleed(v1.set(this.player.pos.x, 1.2, this.player.pos.z), 0, 0, 1);
     this.hitstop(0.06);
+  }
+
+  // ── Blood and Plague ────────────────────────────────────────────────────────────────
+  private stOf(t: Target) {
+    let s = this.status.get(t.id);
+    if (!s) {
+      s = { bleed: 0, bleedT: 0, tick: 0, rotT: 0 };
+      this.status.set(t.id, s);
+    }
+    return s;
+  }
+
+  /** Add Bleed stacks (max 5); each stack bleeds 3 damage a second for 4 s. */
+  addBleed(t: Target, n: number) {
+    if (!t.alive) return;
+    const s = this.stOf(t);
+    s.bleed = Math.min(5, s.bleed + n);
+    s.bleedT = 4;
+  }
+
+  /** Rot: the target deals 25% less damage and takes 15% more. */
+  rot(t: Target, sec: number) {
+    if (!t.alive) return;
+    const s = this.stOf(t);
+    if (s.rotT <= 0) this.fx.ring(v1.set(t.pos.x, 0.1, t.pos.z), 0.2, 1.2, ELEMENT_RGB.plague.clone().multiplyScalar(0.5), 0.3);
+    s.rotT = Math.max(s.rotT, sec);
+  }
+
+  isRotted(t: Target) {
+    return (this.status.get(t.id)?.rotT ?? 0) > 0;
+  }
+
+  /** A poison cloud that hurts enemies standing in it. */
+  cloud(pos: THREE.Vector3, r: number, sec: number) {
+    const clouds = this.hazards.filter((h) => h.kind === "cloud");
+    if (clouds.length > 26) return;
+    this.hazards.push({ kind: "cloud", pos: pos.clone().setY(0.05), r, t: sec, tick: 0.1 });
+    this.fx.decal(pos.x, pos.z, r * 0.8, new THREE.Color(0.04, 0.06, 0.01));
+  }
+
+  /** Pyre of Rot: clouds near a fire hit burst into flame. */
+  private igniteClouds(at: THREE.Vector3) {
+    for (const h of this.hazards) {
+      if (h.kind !== "cloud" || h.t <= 0 || Math.hypot(h.pos.x - at.x, h.pos.z - at.z) > h.r + 1) continue;
+      h.t = 0;
+      this.fx.fire(v1.set(h.pos.x, 0.4, h.pos.z), 18, h.r * 1.4, 1.6);
+      this.fx.ring(v1.set(h.pos.x, 0.1, h.pos.z), 0.3, h.r + 1, ELEMENT_RGB.fire.clone().multiplyScalar(0.6), 0.35);
+      this.audio.boom(0.7);
+      for (const t of this.targets())
+        if (Math.hypot(t.pos.x - h.pos.x, t.pos.z - h.pos.z) < h.r + t.radius) {
+          t.ignite(10, 3);
+          this.damage(t, { dmg: 25 * this.mods.dmg, dir: v2.subVectors(t.pos, h.pos).setY(0).normalize().clone(), kind: "element", move: "pyre", element: "fire", proc: true, knock: 4 });
+        }
+    }
+  }
+
+  /** A bolt from the sky onto a target (Dark Thunder, Judgement Bolt). */
+  private skyBolt(t: Target, dmg: number, move: string) {
+    this.fx.lightning(v1.set(t.pos.x + 0.8, 12, t.pos.z + 0.8).clone(), v2.set(t.pos.x, t.chest, t.pos.z).clone(), ELEMENT_RGB.lightning);
+    this.fx.ring(v1.set(t.pos.x, 0.1, t.pos.z), 0.2, 1.8, ELEMENT_RGB.lightning.clone().multiplyScalar(0.5), 0.3);
+    this.audio.zap();
+    this.damage(t, { dmg: dmg * this.mods.dmg, dir: new THREE.Vector3(), kind: "element", move, element: "lightning", proc: true });
+  }
+
+  healFlat(n: number) {
+    if (this.mods.heal <= 0 || n <= 0 || !this.player.alive) return;
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + n * this.mods.heal);
+  }
+
+  /** Death effects that depend on a target's status. */
+  private onStatusDeath(t: Target, h: Hit, frozen: boolean, burn: boolean, rotted: boolean) {
+    const L = this.loadout;
+    if (rotted && L.has("plague_aux")) this.cloud(t.pos, 2.2, 3.5);
+    if (burn && L.has("inferno_crown")) {
+      this.fx.fire(v1.set(t.pos.x, 0.5, t.pos.z), 16, 1.8, 1.6);
+      this.fx.ring(v1.set(t.pos.x, 0.1, t.pos.z), 0.3, 2.6, ELEMENT_RGB.fire.clone().multiplyScalar(0.6), 0.35);
+      this.audio.boom(0.7);
+      for (const u of this.targets())
+        if (u !== t && u.pos.distanceTo(t.pos) < 2.6) this.damage(u, { dmg: 30 * this.mods.dmg, dir: v2.subVectors(u.pos, t.pos).setY(0).normalize().clone(), kind: "element", move: "inferno", element: "fire", proc: true, knock: 5 });
+    }
+    if (h.crit && L.has("night_feast")) this.healFlat(4);
+    if (frozen && L.has("frostbitten_veins")) this.healFlat(5);
+    if (L.has("pandemic"))
+      for (const c of this.hazards)
+        if (c.kind === "cloud" && c.t > 0 && Math.hypot(c.pos.x - t.pos.x, c.pos.z - t.pos.z) < c.r + 0.5) {
+          c.r = Math.min(4, c.r + 0.6);
+          c.t = Math.max(c.t, 3);
+          this.cloud(t.pos, 1.8, 3);
+          break;
+        }
+    this.status.delete(t.id);
+  }
+
+  private updateStatus(dt: number) {
+    this.zeroT = Math.max(0, this.zeroT - dt);
+    if (!this.status.size) return;
+    const blood = Math.max(1, this.loadout.power("blood_blade"), this.loadout.power("blood_dash"));
+    for (const t of this.targets()) {
+      const s = this.status.get(t.id);
+      if (!s) continue;
+      s.rotT = Math.max(0, s.rotT - dt);
+      if (s.rotT > 0 && Math.random() < dt * 10) this.fx.emit({ x: t.pos.x + (Math.random() - 0.5) * t.radius, y: t.chest + t.air + Math.random() * 0.4, z: t.pos.z + (Math.random() - 0.5) * t.radius, vy: 0.5, color: ROT_COL, size: 0.07, life: 0.7, additive: true });
+      if (s.bleed <= 0) continue;
+      s.bleedT -= dt;
+      if (s.bleedT <= 0) {
+        s.bleed = 0;
+        continue;
+      }
+      if (Math.random() < dt * 6 * s.bleed) this.fx.emit({ x: t.pos.x + (Math.random() - 0.5) * t.radius, y: t.chest + t.air, z: t.pos.z + (Math.random() - 0.5) * t.radius, vy: -1, color: BLEED_COL, size: 0.06, life: 0.6, gravity: 9 });
+      s.tick -= dt;
+      if (s.tick <= 0) {
+        s.tick = 0.5;
+        const fast = t.frozen() && this.loadout.has("frostbitten_veins") ? 3 : 1;
+        this.damage(t, { dmg: 1.5 * s.bleed * blood * fast, dir: new THREE.Vector3(), kind: "dot", move: "bleed", element: "blood", proc: true });
+      }
+    }
+    for (const id of [...this.status.keys()]) if (!this.targets().some((t) => t.id === id)) this.status.delete(id);
   }
 
   /** Let a body drop off the platform; it burns up in the lava far below. */
@@ -1499,6 +1707,28 @@ export class Game {
                 }
           }
           break;
+        case "cloud": {
+          h.t -= dt;
+          h.tick -= dt;
+          if (Math.random() < dt * (6 + h.r * 4)) {
+            const a = Math.random() * Math.PI * 2;
+            const d = Math.random() * h.r * 0.85;
+            this.fx.emit({ x: h.pos.x + Math.cos(a) * d, y: 0.2 + Math.random() * 0.5, z: h.pos.z + Math.sin(a) * d, vy: 0.25, color: CLOUD_COL, alpha: 0.38 * Math.min(1, h.t), size: 0.6 + h.r * 0.25, grow: 0.8, life: 1.3, drag: 1 });
+          }
+          if (h.tick <= 0) {
+            h.tick = 0.4;
+            const pw = Math.max(1, this.loadout.power("plague_guns"), this.loadout.power("plague_dash"), this.loadout.power("plague_aux"));
+            for (const t of this.targets())
+              if (Math.hypot(t.pos.x - h.pos.x, t.pos.z - h.pos.z) < h.r + t.radius * 0.5) {
+                if (this.loadout.has("cold_rot")) {
+                  t.chill(1);
+                  this.rot(t, 2);
+                }
+                this.damage(t, { dmg: 4 * pw * this.mods.dmg, dir: new THREE.Vector3(), kind: "dot", move: "miasma", element: "plague", proc: true });
+              }
+          }
+          break;
+        }
         case "clone":
           h.t -= dt;
           if (Math.random() < dt * 40) this.fx.smoke(h.pos, new THREE.Color(0.02, 0.0, 0.04), 1, 0.7, 0.7);
@@ -1510,7 +1740,9 @@ export class Game {
               if (t.pos.distanceTo(h.pos) < 2.6) {
                 const dir = v2.subVectors(t.pos, h.pos).setY(0).normalize().clone();
                 this.damage(t, { dmg: 22 * Math.max(1, this.loadout.power("shadow_dash")) * this.mods.dmg, dir, kind: "element", move: "inkclone", element: "shadow", proc: true, knock: 6 });
+                if (this.loadout.has("frozen_shade")) t.freeze(1.5);
               }
+            if (this.loadout.has("creeping_doom")) this.cloud(h.pos, 2.4, 3.5);
           }
           break;
         case "wave": {
@@ -1741,6 +1973,7 @@ export class Game {
     this.updateHazards(dt);
     this.updateDebris(dt);
     this.updateFallers(dt);
+    this.updateStatus(dt);
     this.room.update(dt, this.fx);
     if (this.phase === "fight" || this.phase === "killcam") this.room.updateTraps(dt, this);
     this.shop?.update(dt, this.fx);
@@ -1762,3 +1995,13 @@ export class Game {
   }
 }
 
+
+const CLOUD_COL = new THREE.Color(0.14, 0.26, 0.05);
+const ROT_COL = new THREE.Color(0.6, 1.4, 0.25);
+const BLEED_COL = new THREE.Color(0.5, 0.0, 0.03);
+function burning(t: Target) {
+  return ((t as unknown as { burnT?: number }).burnT ?? 0) > 0;
+}
+function chilled(t: Target) {
+  return ((t as unknown as { chillT?: number }).chillT ?? 0) > 0 || t.frozen();
+}

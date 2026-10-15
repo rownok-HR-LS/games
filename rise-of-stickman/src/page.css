@@ -151,7 +151,7 @@ button { font: inherit; color: inherit; }
 .sg-sweep { animation: sg-sweep 1.6s ease-in-out infinite; stroke-dashoffset: 48; }
 .sg-pierce { animation: sg-pierce 1.5s linear infinite; }
 .sg-clone { animation: sg-clone 1.8s ease-in-out infinite; }
-.ros-sigil .sg-orbit { animation: sg-spin 3.6s linear infinite; transform-box: view-box; transform-origin: 32px 32px; }
+.ros-sigil .sg-orbit { animation: sg-spin 3.6s linear infinite; transform-box: view-box; transform-origin: 0 0; }
 .sg-drip { animation: sg-drip 1.6s ease-in infinite; }
 .sg-bob { animation: sg-bob 2.4s ease-in-out infinite; }
 .sg-swing { animation: sg-swing 2.2s ease-in-out infinite; transform-origin: 50% 0% !important; }

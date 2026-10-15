@@ -341,13 +341,15 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
 }
 
 // ── Reward icons ──────────────────────────────────────────────────────────────────────
-export type IconKind = "fire" | "ice" | "lightning" | "shadow" | "relic" | "health" | "souls" | "move" | "boss" | "coins" | "ember" | "shop" | "fountain";
+export type IconKind = "fire" | "ice" | "lightning" | "shadow" | "blood" | "plague" | "relic" | "health" | "souls" | "move" | "boss" | "coins" | "ember" | "shop" | "fountain";
 
 export const ICON_COLOR: Record<IconKind, string> = {
   fire: "#ff6a1a",
   ice: "#7fe3ff",
   lightning: "#ffe14a",
   shadow: "#b06bff",
+  blood: "#ff2a46",
+  plague: "#9be05a",
   relic: "#5dff9a",
   health: "#ff2a3a",
   souls: "#9ef0ff",
@@ -437,6 +439,47 @@ export function iconCanvas(kind: IconKind) {
       g.ellipse(0, 0, 14, 34, 0, 0, Math.PI * 2);
       g.fill();
       break;
+    case "blood": {
+      // A falling drop with two fangs biting into it.
+      g.beginPath();
+      g.moveTo(0, -74);
+      g.bezierCurveTo(34, -30, 56, 2, 56, 28);
+      g.arc(0, 28, 56, 0, Math.PI);
+      g.bezierCurveTo(-56, 2, -34, -30, 0, -74);
+      g.fill();
+      g.fillStyle = "#000";
+      for (const sx of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(sx * 30, 4);
+        g.lineTo(sx * 12, 4);
+        g.lineTo(sx * 20, 44);
+        g.closePath();
+        g.fill();
+      }
+      break;
+    }
+    case "plague": {
+      // Plague doctor mask: round head, long beak, hollow eyes.
+      g.beginPath();
+      g.arc(-14, -14, 42, 0, Math.PI * 2);
+      g.fill();
+      g.beginPath();
+      g.moveTo(10, -26);
+      g.quadraticCurveTo(70, -6, 78, 58);
+      g.quadraticCurveTo(40, 30, 6, 24);
+      g.closePath();
+      g.fill();
+      g.fillStyle = "#000";
+      for (const [x, y] of [
+        [-32, -22],
+        [0, -24],
+      ]) {
+        g.beginPath();
+        g.arc(x, y, 10, 0, Math.PI * 2);
+        g.fill();
+      }
+      break;
+    }
     case "relic":
       // Cursed chalice.
       g.beginPath();

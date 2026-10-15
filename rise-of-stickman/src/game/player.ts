@@ -43,6 +43,8 @@ export const ELEMENT_RGB: Record<Element, THREE.Color> = {
   ice: new THREE.Color(0.6, 1.8, 3),
   lightning: new THREE.Color(3, 2.6, 0.6),
   shadow: new THREE.Color(1.6, 0.5, 3),
+  blood: new THREE.Color(2.6, 0.12, 0.2),
+  plague: new THREE.Color(1.0, 2.4, 0.35),
 };
 
 export function angDiff(a: number, b: number) {
@@ -113,6 +115,8 @@ export class Player {
   /** The thrown glaive (special): flies between enemies, then back to the hand. */
   private thrown: { pos: THREE.Vector3; target: Target | null; aim: THREE.Vector3; hit: Set<number>; left: number; back: boolean; t: number } | null = null;
   private discSpin = 0;
+  /** Guaranteed shadow strikes left (Eclipse). */
+  eclipse = 0;
   /** Falling into the abyss: drop below the platform, and where to come back to. */
   private fallY = 0;
   private fallVy = 0;
@@ -812,7 +816,10 @@ export class Player {
       if (a === "butcher" && ((t as unknown as { shield?: number }).shield ?? 0) > 0) dmg *= 2;
       if (a === "hunter" && this.marks.has(t.id) && (def.style === "chain" || def.style === "lash")) dmg *= 1.3;
       let crit = false;
-      if (Math.random() < 0.18 * g.loadout.power("shadow_blade")) {
+      const burningT = ((t as unknown as { burnT?: number }).burnT ?? 0) > 0;
+      const critChance = 0.18 * g.loadout.power("shadow_blade") + (burningT && g.loadout.has("black_flame") ? 0.15 : 0) + (this.hp < this.maxHp * 0.5 && g.loadout.has("night_feast") ? 0.1 : 0);
+      if (this.eclipse > 0 || Math.random() < critChance) {
+        if (this.eclipse > 0) this.eclipse--;
         dmg *= 2;
         crit = true;
       }
@@ -880,6 +887,7 @@ export class Player {
       }
     }
     if (g.loadout.has("fire_dash") && Math.random() < dt * 40) g.firePatch(this.pos.clone());
+    if (g.loadout.has("plague_dash") && Math.random() < dt * 22) g.cloud(this.pos, 1.2, 2.5);
     if (g.input.pressed.has("attack") && !this.thrown) {
       this.lastDashEnd = this.time;
       return this.startSlash(this.w.dash);
@@ -924,10 +932,18 @@ export class Player {
       return "dodged";
     }
     // Take the hit.
-    const taken = dmg * g.mods.taken * g.dmgScale * (this.inWrath ? 0.6 : 1);
+    const taken = dmg * g.mods.taken * g.dmgScale * (this.inWrath ? 0.6 : 1) * (g.loadout.has("blood_aux") && this.hp < this.maxHp * 0.3 ? 0.8 : 1);
     this.hp -= taken;
     g.onPlayerHurt(taken);
     this.iframes = 0.35;
+    if (this.hp <= 0 && g.loadout.has("undying_thirst") && !g.undyingUsed) {
+      // Undying Thirst: once per chamber, cheat death.
+      g.undyingUsed = true;
+      this.hp = Math.round(this.maxHp * 0.3);
+      this.iframes = 1.2;
+      g.toast("UNDYING THIRST", "#ff2a46");
+      g.fx.ring(this.pos, 0.3, 3, new THREE.Color(1.6, 0.05, 0.1), 0.5);
+    }
     if (this.hp <= 0) {
       if (this.defiance > 0) {
         // Death Defiance: rise again with 40% health.

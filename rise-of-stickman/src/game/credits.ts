@@ -106,4 +106,20 @@ export const CREDITS = [
     licence: "CC BY 4.0",
     licenceUrl: "https://creativecommons.org/licenses/by/4.0/",
   },
+  {
+    what: "Tiefling Blood- Warlock",
+    role: "Vharkul, the Crimson Sovereign",
+    by: "milakpro",
+    url: "https://sketchfab.com/3d-models/01113dfceba94925b09479acb659e154",
+    licence: "CC BY 4.0",
+    licenceUrl: "https://creativecommons.org/licenses/by/4.0/",
+  },
+  {
+    what: "Plague Doctor",
+    role: "Mortis, the Plague Saint",
+    by: "BeardenInc",
+    url: "https://sketchfab.com/3d-models/41f7a1dfd6984135b876f334908e3ca4",
+    licence: "CC BY 4.0",
+    licenceUrl: "https://creativecommons.org/licenses/by/4.0/",
+  },
 ];
