@@ -34,6 +34,7 @@ import { Butcher } from "./miniboss";
 import { itemIcon as shopIcon, itemName, MERCHANT_LINES, pick, Armoury, Fountain, Shop, type ShopItem } from "./special";
 import { WEAPONS, type WeaponId } from "./weapons";
 import { ASPECTS, aspectOf, type AspectId } from "./aspects";
+import { ANVIL } from "./anvil";
 import { loadSave, writeSave, type SaveData } from "./save";
 import { Fx } from "./fx";
 import { LordApparition, LORDS } from "./lords";
@@ -74,7 +75,8 @@ type Debris = {
 type Hazard =
   | { kind: "fire"; pos: THREE.Vector3; t: number; enemy: boolean; tick: number }
   | { kind: "clone"; pos: THREE.Vector3; t: number }
-  | { kind: "wave"; pos: THREE.Vector3; dir: THREE.Vector3; left: number; hit: Set<number>; color: THREE.Color }
+  | { kind: "wave"; pos: THREE.Vector3; dir: THREE.Vector3; left: number; hit: Set<number>; color: THREE.Color; dmg?: number; move?: string }
+  | { kind: "rift"; a: THREE.Vector3; b: THREE.Vector3; t: number; dmg: number }
   | { kind: "fountain"; obj: THREE.Object3D; t: number; scale: number }
   | { kind: "blast"; pos: THREE.Vector3; t: number; tel: ReturnType<Fx["telegraph"]> }
   | { kind: "cloud"; pos: THREE.Vector3; r: number; t: number; tick: number };
@@ -141,6 +143,8 @@ export class Game {
   private zeroT = 0;
   /** Undying Thirst used this chamber. */
   undyingUsed = false;
+  /** Soul Anvil doors offered this run. */
+  private anvils = 0;
   /** Bodies tumbling into the abyss. */
   private fallers: { obj: THREE.Object3D; vel: THREE.Vector3; spin: THREE.Vector3 }[] = [];
   private orbMedal: THREE.Group | null = null;
@@ -260,6 +264,7 @@ export class Game {
   // ── Run flow ────────────────────────────────────────────────────────────────────────
   startRun() {
     this.loadout = new Loadout();
+    this.anvils = 0;
     this.mods = this.loadout.mods();
     this.player.maxHp = 100;
     this.player.hp = 100;
@@ -601,6 +606,14 @@ export class Game {
           "Cursed Relic",
           this.loadout.offerRelics().map((x) => ({ id: x.id, name: x.name, text: `${x.boon} ${x.curse}`, icon: "relic" as IconKind, color: "#5dff9a", tag: "Cursed relic", note: x.curse })),
         );
+      case "anvil": {
+        const w = this.player.w;
+        const ups = ANVIL[w.id].filter((u) => !this.loadout.anvil.has(u.id)).sort(() => Math.random() - 0.5).slice(0, 3);
+        return this.offer(
+          "Soul Anvil",
+          ups.map((u) => ({ id: `anv:${u.id}`, name: u.name, text: u.text, icon: "anvil" as IconKind, color: "#c57bff", rarity: "#c57bff", tag: `Soul Anvil · ${w.name}` })),
+        );
+      }
       case "move":
         return this.offer(
           "New Move",
@@ -673,6 +686,16 @@ export class Game {
 
   /** Called by the UI when a card is picked. */
   choose(id: string) {
+    if (id.startsWith("anv:")) {
+      this.loadout.anvil.add(id.slice(4));
+      this.player.refreshWeapon();
+      this.audio.buy();
+      this.hud.toast("WEAPON REFORGED", "#c57bff");
+      this.fx.ring(this.player.pos, 0.3, 2.4, new THREE.Color(1.2, 0.6, 1.8), 0.45);
+      this.hud.boons(this.loadout);
+      this.setPaused(false);
+      return this.afterChoice();
+    }
     if (id.startsWith("asp:")) {
       this.setPaused(false);
       return this.pickAspect(id.slice(4) as AspectId);
@@ -769,7 +792,7 @@ export class Game {
   }
 
   private shopStock(): ShopItem[] {
-    const el = ELEMENTS[(Math.random() * 4) | 0];
+    const el = ELEMENTS[(Math.random() * ELEMENTS.length) | 0];
     const items: ShopItem[] = [{ kind: "vial", price: 70 }, { kind: "blessing", element: el, price: 140 }];
     items.push(this.loadout.owned().length ? { kind: "ember", price: 110 } : { kind: "relic", price: 120 });
     if (this.player.defiance < this.player.defianceMax) items.push({ kind: "defiance", price: 200 });
@@ -940,7 +963,12 @@ export class Game {
   }
 
   private rollReward(type: DoorPlan["type"]): Reward {
-    const el = ELEMENTS[(Math.random() * 4) | 0];
+    const el = ELEMENTS[(Math.random() * ELEMENTS.length) | 0];
+    // Soul Anvil: rare, from Chamber 3, at most twice a run.
+    if ((type === "combat" || type === "elite") && this.roomNo + 1 >= 3 && this.anvils < 2 && Math.random() < 0.12) {
+      this.anvils++;
+      return { kind: "anvil" };
+    }
     if (type === "abyss") return Math.random() < 0.7 ? { kind: "blessing", element: el, minRarity: "epic" } : { kind: "relic" };
     const owned = this.loadout.owned().length > 0;
     for (let i = 0; i < 10; i++) {
@@ -1188,6 +1216,17 @@ export class Game {
 
   inkClone(pos: THREE.Vector3) {
     this.hazards.push({ kind: "clone", pos: pos.clone(), t: 0.6 });
+  }
+
+  /** A slash wave that travels along the floor (Blood Moon Wave, Crescent Ring, Shockwave Jabs). */
+  wave(pos: THREE.Vector3, yaw: number, color: THREE.Color, length: number, dmg: number, move: string) {
+    const dir = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    this.hazards.push({ kind: "wave", pos: pos.clone().setY(0).addScaledVector(dir, 0.6), dir, left: length, hit: new Set(), color, dmg, move });
+  }
+
+  /** Rift Walker: the line of a Rift Cut tears again a moment later. */
+  rift(a: THREE.Vector3, b: THREE.Vector3, dmg: number) {
+    this.hazards.push({ kind: "rift", a: a.clone().setY(0), b: b.clone().setY(0), t: 0.5, dmg });
   }
 
   splitter(pos: THREE.Vector3, yaw: number, color: THREE.Color) {
@@ -1729,6 +1768,21 @@ export class Game {
           }
           break;
         }
+        case "rift":
+          h.t -= dt;
+          if (Math.random() < dt * 30) this.fx.emit({ x: h.a.x + (h.b.x - h.a.x) * Math.random(), y: 1, z: h.a.z + (h.b.z - h.a.z) * Math.random(), color: this.player.w.trail, size: 0.12, life: 0.3, additive: true });
+          if (h.t <= 0) {
+            this.fx.beam(v1.set(h.a.x, 1.1, h.a.z).clone(), v2.set(h.b.x, 1.1, h.b.z).clone(), this.player.w.trail.clone().multiplyScalar(2), 0.08, 0.3);
+            this.audio.slash(true);
+            const ab = v1.subVectors(h.b, h.a);
+            const len2 = Math.max(1e-4, ab.lengthSq());
+            for (const t of this.targets()) {
+              const k = Math.max(0, Math.min(1, ((t.pos.x - h.a.x) * ab.x + (t.pos.z - h.a.z) * ab.z) / len2));
+              if (Math.hypot(t.pos.x - (h.a.x + ab.x * k), t.pos.z - (h.a.z + ab.z * k)) < t.radius + 1.0)
+                this.damage(t, { dmg: h.dmg * this.mods.dmg, dir: ab.clone().normalize(), kind: "special", move: "rift", knock: 3 });
+            }
+          }
+          break;
         case "clone":
           h.t -= dt;
           if (Math.random() < dt * 40) this.fx.smoke(h.pos, new THREE.Color(0.02, 0.0, 0.04), 1, 0.7, 0.7);
@@ -1751,13 +1805,15 @@ export class Game {
           h.left -= step;
           if (Math.abs(h.pos.x) > this.room.hx || Math.abs(h.pos.z) > this.room.hz) h.left = 0;
           this.fx.sparks(v1.set(h.pos.x, 0.2, h.pos.z), h.color, 3, 5);
-          this.fx.fire(h.pos, 1, 0.5, 1);
+          if (!h.dmg) this.fx.fire(h.pos, 1, 0.5, 1);
+          else this.fx.emit({ x: h.pos.x, y: 0.6, z: h.pos.z, color: h.color, size: 0.5, life: 0.18, additive: true, shrink: true });
           if (Math.random() < 0.6) this.fx.decal(h.pos.x, h.pos.z, 0.9, new THREE.Color(0.02, 0.015, 0.01));
           for (const t of this.targets()) {
             if (h.hit.has(t.id)) continue;
             if (Math.hypot(t.pos.x - h.pos.x, t.pos.z - h.pos.z) < t.radius + 1.3) {
               h.hit.add(t.id);
-              this.damage(t, { dmg: 45 * this.mods.dmg, dir: h.dir, kind: "splitter", move: "splitter", knock: 5, launch: 6, heavy: true });
+              if (h.dmg) this.damage(t, { dmg: h.dmg * this.mods.dmg, dir: h.dir, kind: "special", move: h.move ?? "wave", knock: 3, element: this.loadout.slots.blade?.element ?? null });
+              else this.damage(t, { dmg: 45 * this.mods.dmg, dir: h.dir, kind: "splitter", move: "splitter", knock: 5, launch: 6, heavy: true });
             }
           }
           break;

@@ -20,6 +20,8 @@ import {
 } from "./anims";
 import { WEAPONS, type WeaponDef, type WeaponId } from "./weapons";
 import { ASPECTS, aspectOf, buildWeapon, type AspectDef, type AspectId } from "./aspects";
+import { applyAnvil } from "./anvil";
+import { scytheMesh } from "./hero";
 import type { Element } from "./boons";
 import type { Game } from "./game";
 import { Ghost, GlaiveChain, HeroModel } from "./hero";
@@ -109,6 +111,16 @@ export class Player {
   private hitCount = 0;
   /** Enemies marked by the Hunter's ricochet: id → time the mark fades. */
   private marks = new Map<number, number>();
+  /** Delayed actions (Aftershock, Twin Discs). */
+  private later: { t: number; fn: () => void }[] = [];
+  /** Thrown scythes (Reaper's Toss). */
+  private tossed: { mesh: THREE.Group; pos: THREE.Vector3; dir: THREE.Vector3; d: number; back: boolean; hit: Set<number> }[] = [];
+  /** Blade Orbit time left, its scythes and per-target hit cooldowns. */
+  private orbitT = 0;
+  private orbiters: THREE.Group[] = [];
+  private orbitHit = new Map<number, number>();
+  /** Bounces made by the current Ricochet (Razor Ricochet). */
+  private bounces = 0;
   private chain: GlaiveChain;
   /** Arc of the current glaive swing (for the disc on its chain). */
   private arcFrame: { c: THREE.Vector3; x: THREE.Vector3; z: THREE.Vector3; sweep: number; radius: number } | null = null;
@@ -158,9 +170,14 @@ export class Player {
     return this.model.rig;
   }
 
+  /** Rebuild the weapon's moves after a Soul Anvil upgrade. */
+  refreshWeapon() {
+    this.w = applyAnvil(buildWeapon(this.w.id, this.asp.id), this.game.loadout.anvil);
+  }
+
   setWeapon(id: WeaponId, aspect?: AspectId) {
     this.asp = aspect && aspectOf(aspect).weapon === id ? aspectOf(aspect) : ASPECTS[id][0];
-    this.w = buildWeapon(id, this.asp.id);
+    this.w = applyAnvil(buildWeapon(id, this.asp.id), this.game.loadout.anvil);
     this.harvest = 0;
     this.marks.clear();
     this.model.setMelee(id);
@@ -326,6 +343,7 @@ export class Player {
     this.model.setGlow(attacking ? 1.6 : this.inWrath ? 1.2 : 0.25);
     this.updateGlaive(dt);
     this.updateAspects(dt);
+    this.updateAnvil(dt);
   }
 
   private enter(s: State) {
@@ -519,6 +537,7 @@ export class Player {
           if (this.hitsDone === 0) this.swingSound(def);
           this.moveFx(def);
         }
+        if (this.hitsDone === 0) this.anvilSwing(def);
         if (this.hitsDone > 0) this.hitIds.clear();
         if (def.style === "throw") this.throwDisc();
         else this.hitAround(def, def.range, false);
@@ -535,6 +554,7 @@ export class Player {
       return this.startSlash(this.w.combo[next], next);
     }
     if (t >= def.dur) {
+      if (def === this.w.special && this.w.id === "scythes" && this.game.loadout.anvil.has("blade_orbit")) this.orbitT = 4;
       this.sinceSlash = this.buffered && def === this.w.combo[this.w.combo.length - 1] ? 9 : 0;
       if (def === this.w.combo[this.w.combo.length - 1] || def === this.w.special || def === this.w.dash) this.combo = this.w.combo.length - 1; // next press restarts at 0
       this.spin = 0;
@@ -602,6 +622,131 @@ export class Player {
     }
   }
 
+  // ── Soul Anvil ─────────────────────────────────────────────────────────────────────
+  private anvilSwing(def: SlashDef) {
+    const g = this.game;
+    const A = g.loadout.anvil;
+    if (!A.size) return;
+    const last = this.w.combo[this.w.combo.length - 1];
+    const col = this.slashColor().multiplyScalar(2);
+    if (this.w.id === "katana") {
+      if (def === last && A.has("moon_wave")) g.wave(this.pos, this.yaw, new THREE.Color(1.6, 0.15, 0.2), 11, 28, "moonwave");
+      if (def === this.w.combo[1] && A.has("quickdraw")) {
+        const near = g
+          .targets()
+          .map((t) => ({ t, d: t.pos.distanceTo(this.pos) }))
+          .filter((x) => x.d < 14)
+          .sort((a, b) => a.d - b.d)
+          .slice(0, 2);
+        for (const { t } of near) {
+          const o = new THREE.Vector3(this.pos.x, 1.2, this.pos.z);
+          g.fireBullet(o, new THREE.Vector3(t.pos.x - o.x, 0, t.pos.z - o.z).normalize(), { dmg: 7, pierce: false, lightning: false, perfect: false });
+        }
+        if (near.length) g.audio.gun(false);
+      }
+      if (def === this.w.dash && A.has("rift_walker")) {
+        const a = this.pos.clone();
+        const b = this.pos.clone().add(new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw)).multiplyScalar(def.lunge));
+        g.rift(a, b, 22);
+      }
+    }
+    if (this.w.id === "scythes") {
+      if (def.id === "cross" && A.has("reapers_toss")) for (const side of [-0.25, 0.25]) this.tossScythe(this.yaw + side);
+      if (def === last && A.has("crescent_ring")) for (let i = 0; i < 8; i++) g.wave(this.pos, (i / 8) * Math.PI * 2, new THREE.Color(1.4, 0.2, 0.3), 5, 10, "crescent");
+    }
+    if (this.w.id === "gauntlets") {
+      if ((def.id === "jab1" || def.id === "jab2") && A.has("shockwave_jabs")) g.wave(this.pos, this.yaw, new THREE.Color(1.4, 0.7, 0.2), 3.5, 9, "shockwave");
+      if (def.style === "slam" && def !== this.w.special && A.has("aftershock"))
+        this.later.push({
+          t: 0.4,
+          fn: () => {
+            this.moveFx(def);
+            this.hitIds.clear();
+            this.hitAround(def, def.range, false);
+          },
+        });
+    }
+    if (this.w.id === "glaive" && (def.style === "chain" || def.style === "lash") && A.has("twin_discs"))
+      this.later.push({
+        t: 0.1,
+        fn: () => {
+          const echo = { ...def, dmg: def.dmg * 0.6 };
+          this.arc(def.fx);
+          this.hitIds.clear();
+          this.hitAround(echo, def.range, false);
+        },
+      });
+  }
+
+  /** Reaper's Toss: a scythe flies out, then comes back to the hand. */
+  private tossScythe(yaw: number) {
+    const mesh = scytheMesh(new THREE.Color(1, 0.15, 0.2)).group;
+    mesh.scale.setScalar(1.6);
+    this.game.scene.add(mesh);
+    this.tossed.push({ mesh, pos: new THREE.Vector3(this.pos.x, 1.1, this.pos.z), dir: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), d: 0, back: false, hit: new Set() });
+  }
+
+  private updateAnvil(dt: number) {
+    const g = this.game;
+    for (const l of this.later) l.t -= dt;
+    const due = this.later.filter((l) => l.t <= 0);
+    this.later = this.later.filter((l) => l.t > 0);
+    for (const l of due) l.fn();
+    // Thrown scythes.
+    this.tossed = this.tossed.filter((s) => {
+      const step = 18 * dt;
+      if (!s.back) {
+        s.pos.addScaledVector(s.dir, step);
+        s.d += step;
+        if (s.d > 7.5) {
+          s.back = true;
+          s.hit.clear();
+        }
+      } else {
+        const to = v1.set(this.pos.x - s.pos.x, 0, this.pos.z - s.pos.z);
+        if (to.length() < 0.8) {
+          g.scene.remove(s.mesh);
+          return false;
+        }
+        s.pos.addScaledVector(to.normalize(), step * 1.2);
+      }
+      s.mesh.position.copy(s.pos);
+      s.mesh.rotation.set(Math.PI / 2, 0, (s.mesh.rotation.z += dt * 22));
+      for (const t of g.targets())
+        if (!s.hit.has(t.id) && Math.hypot(t.pos.x - s.pos.x, t.pos.z - s.pos.z) < t.radius + 0.7) {
+          s.hit.add(t.id);
+          g.damage(t, { dmg: 12 * g.mods.dmg, dir: s.dir.clone(), kind: "special", move: "toss", knock: 2, element: g.loadout.slots.blade?.element ?? null });
+        }
+      return true;
+    });
+    // Blade Orbit.
+    if (this.orbitT > 0) {
+      this.orbitT -= dt;
+      while (this.orbiters.length < 2) {
+        const m = scytheMesh(new THREE.Color(1.2, 0.3, 0.9)).group;
+        m.scale.setScalar(1.4);
+        g.scene.add(m);
+        this.orbiters.push(m);
+      }
+      this.orbiters.forEach((m, i) => {
+        const a = this.time * 7 + i * Math.PI;
+        m.position.set(this.pos.x + Math.cos(a) * 2.1, 1.1, this.pos.z + Math.sin(a) * 2.1);
+        m.rotation.set(Math.PI / 2, 0, -a);
+        for (const t of g.targets()) {
+          if ((this.orbitHit.get(t.id) ?? 0) > this.time) continue;
+          if (Math.hypot(t.pos.x - m.position.x, t.pos.z - m.position.z) < t.radius + 0.7) {
+            this.orbitHit.set(t.id, this.time + 0.35);
+            g.damage(t, { dmg: 8 * g.mods.dmg, dir: new THREE.Vector3(Math.cos(a + Math.PI / 2), 0, Math.sin(a + Math.PI / 2)), kind: "special", move: "orbit", knock: 2 });
+          }
+        }
+      });
+      if (this.orbitT <= 0) {
+        for (const m of this.orbiters) g.scene.remove(m);
+        this.orbiters = [];
+      }
+    }
+  }
+
   // ── Aspects ────────────────────────────────────────────────────────────────────────
   /** Drag an enemy toward the hero (Grave vortex, Serpent hook). */
   private pull(t: Target, keep: number) {
@@ -666,6 +811,7 @@ export class Player {
     this.rig.root.updateMatrixWorld(true);
     const from = this.rig.worldOf("handR", new THREE.Vector3());
     const aim = new THREE.Vector3(this.pos.x + Math.sin(this.yaw) * 9, 1.1, this.pos.z + Math.cos(this.yaw) * 9);
+    this.bounces = 0;
     this.thrown = { pos: from, target: this.nextDiscTarget(from, new Set(), 13, true), aim, hit: new Set(), left: this.asp.id === "hunter" ? 8 : 5, back: false, t: 0 };
     this.model.setGlaiveOut(true);
     g.audio.chainWhip(true);
@@ -768,7 +914,7 @@ export class Player {
     if (this.asp.id === "hunter") this.marks.set(t.id, this.time + 6);
     const dir = new THREE.Vector3(t.pos.x - this.pos.x, 0, t.pos.z - this.pos.z).normalize();
     g.damage(t, {
-      dmg: this.w.special.dmg * g.mods.dmg * (this.inWrath ? 1.8 : 1),
+      dmg: this.w.special.dmg * g.mods.dmg * (this.inWrath ? 1.8 : 1) * (g.loadout.anvil.has("razor_ricochet") ? 1 + 0.2 * this.bounces++ : 1),
       dir,
       kind: "special",
       move: "ricochet",
@@ -811,6 +957,8 @@ export class Player {
       if (def.cone >= Math.PI && !path) dir.lerp(new THREE.Vector3(fx, 0, fz), 0.2).normalize();
       let dmg = def.dmg * mods.dmg * (this.inWrath ? 1.8 : 1);
       if (def.airBonus && t.air > 0.3) dmg *= def.airBonus;
+      if (g.loadout.anvil.has("first_blood") && t.hp > t.maxHp * 0.8) dmg *= 2;
+      const stun = !t.isBoss && ((def === this.w.dash && g.loadout.anvil.has("battering_ram")) || (def.style === "lash" && g.loadout.anvil.has("stunning_lash")));
       const a = this.asp.id;
       if (a === "harvest") dmg *= 1 + 0.05 * this.harvest;
       if (a === "butcher" && ((t as unknown as { shield?: number }).shield ?? 0) > 0) dmg *= 2;
@@ -839,6 +987,7 @@ export class Player {
         execute,
         at: new THREE.Vector3(t.pos.x - dir.x * t.radius * 0.5, t.chest + t.air, t.pos.z - dir.z * t.radius * 0.5),
       });
+      if (stun && t.alive) t.parried();
     }
     // Aspect effects on everything this swing hit.
     for (const t of g.targets()) {
@@ -932,7 +1081,7 @@ export class Player {
       return "dodged";
     }
     // Take the hit.
-    const taken = dmg * g.mods.taken * g.dmgScale * (this.inWrath ? 0.6 : 1) * (g.loadout.has("blood_aux") && this.hp < this.maxHp * 0.3 ? 0.8 : 1);
+    const taken = dmg * g.mods.taken * g.dmgScale * (this.inWrath ? 0.6 : 1) * (this.state === "slash" && g.loadout.anvil.has("iron_wall") ? 0.7 : 1) * (g.loadout.has("blood_aux") && this.hp < this.maxHp * 0.3 ? 0.8 : 1);
     this.hp -= taken;
     g.onPlayerHurt(taken);
     this.iframes = 0.35;

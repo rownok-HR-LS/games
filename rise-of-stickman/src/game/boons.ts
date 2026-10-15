@@ -127,7 +127,8 @@ export type Reward =
   | { kind: "move" }
   | { kind: "health" }
   | { kind: "coins"; amount: number }
-  | { kind: "ember" };
+  | { kind: "ember" }
+  | { kind: "anvil" };
 
 export type DoorPlan = { type: RoomType; reward: Reward | null };
 
@@ -139,6 +140,8 @@ export function rewardIcon(r: Reward): IconKind {
       return "coins";
     case "ember":
       return "ember";
+    case "anvil":
+      return "anvil";
     default:
       return r.kind;
   }
@@ -158,6 +161,8 @@ export function rewardLabel(r: Reward) {
       return `${r.amount} Bone Coins`;
     case "ember":
       return "Ember Heart";
+    case "anvil":
+      return "Soul Anvil";
   }
 }
 
@@ -198,6 +203,8 @@ export class Loadout {
   extras: Owned[] = [];
   relics: Relic[] = [];
   moves = new Set<string>();
+  /** Soul Anvil weapon upgrades taken this run. */
+  anvil = new Set<string>();
 
   has(id: string) {
     for (const b of Object.values(this.slots)) if (b?.id === id) return true;

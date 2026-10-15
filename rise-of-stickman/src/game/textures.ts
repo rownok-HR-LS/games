@@ -341,7 +341,7 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
 }
 
 // ── Reward icons ──────────────────────────────────────────────────────────────────────
-export type IconKind = "fire" | "ice" | "lightning" | "shadow" | "blood" | "plague" | "relic" | "health" | "souls" | "move" | "boss" | "coins" | "ember" | "shop" | "fountain";
+export type IconKind = "fire" | "ice" | "lightning" | "shadow" | "blood" | "plague" | "relic" | "health" | "souls" | "move" | "boss" | "coins" | "ember" | "shop" | "fountain" | "anvil";
 
 export const ICON_COLOR: Record<IconKind, string> = {
   fire: "#ff6a1a",
@@ -351,6 +351,7 @@ export const ICON_COLOR: Record<IconKind, string> = {
   blood: "#ff2a46",
   plague: "#9be05a",
   relic: "#5dff9a",
+  anvil: "#c57bff",
   health: "#ff2a3a",
   souls: "#9ef0ff",
   move: "#ffffff",
@@ -478,6 +479,26 @@ export function iconCanvas(kind: IconKind) {
         g.arc(x, y, 10, 0, Math.PI * 2);
         g.fill();
       }
+      break;
+    }
+    case "anvil": {
+      // Anvil on a block with a soul flame above it.
+      g.beginPath();
+      g.moveTo(-62, -12);
+      g.lineTo(52, -12);
+      g.quadraticCurveTo(60, 4, 34, 10);
+      g.lineTo(22, 10);
+      g.lineTo(26, 36);
+      g.lineTo(-26, 36);
+      g.lineTo(-22, 10);
+      g.quadraticCurveTo(-48, 6, -62, -12);
+      g.fill();
+      g.fillRect(-38, 40, 76, 18);
+      g.beginPath();
+      g.moveTo(0, -70);
+      g.bezierCurveTo(18, -50, 18, -32, 0, -22);
+      g.bezierCurveTo(-18, -32, -16, -50, 0, -70);
+      g.fill();
       break;
     }
     case "relic":

@@ -70,6 +70,27 @@ const ART: Record<string, string> = {
   eclipse: `<circle r="15" fill="currentColor" fill-opacity=".25"/>${at(5, -3, `<circle r="13" fill="rgba(8,3,4,.95)" stroke-opacity=".7"/>`, "sg-bob")}<circle r="19" stroke-dasharray="2 4" stroke-opacity=".6"/>`,
   undying_thirst: `${at(0, 4, HEART, "sg-pulse")}${at(0, -14, `<ellipse rx="10" ry="3"/>`, "sg-bob")}`,
   pandemic: `${at(0, 2, PUFF, "sg-pulse")}${at(0, 0, `<circle r="12" stroke-opacity=".6"/>`, "sg-ripple")}${at(0, 0, `<circle r="12" stroke-opacity=".6"/>`, "sg-ripple", "animation-delay:-.9s")}`,
+  // ── Soul Anvil ──
+  moon_wave: `${at(-4, 4, `<path d="M-10 10 a14 14 0 0 1 20 -20 a10 10 0 0 0 -20 20z" fill="currentColor" fill-opacity=".4"/>`, "sg-slide")}${at(12, -10, `<circle r="5" fill="currentColor" fill-opacity=".3"/>`, "sg-pulse")}`,
+  quickdraw: `${KATANA}${at(10, 10, `<g transform="scale(.6)">${BULLET}</g>`, "sg-slide")}${at(-12, -8, `<g transform="scale(.6)">${BULLET}</g>`, "sg-slide", "animation-delay:-.6s")}`,
+  twin_cyclone: `<g class="sg-spin-fast"><path d="M0 -16 a16 16 0 0 1 16 16" stroke-width="2.8"/><path d="M0 16 a16 16 0 0 1 -16 -16" stroke-width="2.8"/></g><g class="sg-spin"><path d="M0 -9 a9 9 0 0 1 9 9"/><path d="M0 9 a9 9 0 0 1 -9 -9"/></g>`,
+  rift_walker: `${KATANA}${at(0, 0, `<path d="M-20 6 L20 -6" stroke-dasharray="3 3" stroke-width="2.6"/>`, "sg-flash")}`,
+  first_blood: `${KATANA}${at(12, 10, `<path d="M0 -7 q5 6 5 9 a5 5 0 0 1 -10 0 q0 -3 5 -9z" fill="currentColor"/>`, "sg-drip")}<path d="M-14 -16 h8 M-10 -20 v8" stroke-width="2"/>`,
+  reapers_toss: `<g class="sg-spin"><path d="M-2 -14 q12 2 12 14 q-5 -8 -12 -8z" fill="currentColor" fill-opacity=".35"/><path d="M2 14 q-12 -2 -12 -14 q5 8 12 8z" fill="currentColor" fill-opacity=".35"/></g><path d="M-20 18 q20 -10 40 0" stroke-dasharray="3 3" stroke-opacity=".6"/>`,
+  blade_orbit: `${at(0, 2, STICK)}<g class="sg-orbit"><path d="M-18 0 q-4 -6 2 -9" stroke-width="2.6"/><path d="M18 0 q4 6 -2 9" stroke-width="2.6"/></g>`,
+  thousand_cuts: `<path d="M-16 -10 L10 14 M-10 -16 L16 8" stroke-width="2.4"/>${at(0, 0, `<path d="M-16 6 L6 -16 M-10 12 L12 -10" stroke-width="2.4"/>`, "sg-flash")}`,
+  crescent_ring: `<circle r="5" fill="currentColor" fill-opacity=".4"/>${[0, 1, 2, 3, 4, 5].map((i) => at(Math.cos((i * Math.PI) / 3) * 15, Math.sin((i * Math.PI) / 3) * 15, `<path d="M-4 -4 a6 6 0 0 1 0 8" stroke-width="2.4"/>`, "sg-pulse", `animation-delay:-${i * 0.25}s`)).join("")}`,
+  long_reach: `<path d="M-20 18 L14 -16" stroke-width="2.4"/><path d="M14 -16 q12 2 8 14 q-3 -9 -8 -14z" fill="currentColor" fill-opacity=".35"/>${at(-6, 6, `<path d="M-6 0 h12 M2 -4 l4 4 l-4 4"/>`, "sg-slide-s")}`,
+  shockwave_jabs: `${at(-8, 0, `<path d="M-7 -6 h12 a3 3 0 0 1 3 3 v8 a3 3 0 0 1 -3 3 h-12 a3 3 0 0 1 -3 -3 v-8 a3 3 0 0 1 3 -3z" fill="currentColor" fill-opacity=".25"/>`)}${at(10, 0, `<path d="M0 -10 a10 10 0 0 1 0 20" stroke-width="2.4"/>`, "sg-ripple")}`,
+  aftershock: `<path d="M-20 10 h40" stroke-opacity=".5"/>${at(0, 10, `<path d="M-6 0 L-12 -8 M6 0 L12 -8 M0 0 V-10"/>`, "sg-burst")}${at(0, 10, `<path d="M-6 0 L-12 -8 M6 0 L12 -8 M0 0 V-10"/>`, "sg-burst", "animation-delay:-.5s")}`,
+  rising_dragon: `${at(0, 0, `<path d="M-4 16 q-8 -14 4 -24 q10 -8 6 -16 q8 8 0 18 q-8 8 -2 22z" fill="currentColor" fill-opacity=".35"/>`, "sg-bob")}`,
+  iron_wall: `<path d="M-14 -16 h28 v14 q0 14 -14 20 q-14 -6 -14 -20z" fill="currentColor" fill-opacity=".2"/>${at(0, 0, `<path d="M-6 -4 h12 v8 h-12z" fill="currentColor" fill-opacity=".5"/>`, "sg-pulse")}`,
+  battering_ram: `${at(-4, 0, `<path d="M-12 -8 h16 l8 8 l-8 8 h-16z" fill="currentColor" fill-opacity=".3"/>`, "sg-slide-s")}${at(16, -8, SPARK, "sg-twinkle")}${at(16, 8, SPARK, "sg-twinkle", "animation-delay:-.5s")}`,
+  twin_discs: `${at(-6, 0, `<circle r="8"/><circle r="2.5" fill="currentColor"/>`, "sg-spin")}${at(8, 4, `<circle r="8" stroke-opacity=".6"/><circle r="2.5" fill="currentColor"/>`, "sg-spin", "animation-delay:-.4s")}`,
+  razor_ricochet: `<path d="M-20 12 L-6 -6 L6 8 L20 -10" stroke-dasharray="3 3"/>${at(-6, -6, `<circle r="4"/>`, "sg-pulse")}${at(6, 8, `<circle r="5.5"/>`, "sg-pulse", "animation-delay:-.4s")}${at(20, -10, `<circle r="7" fill="currentColor" fill-opacity=".3"/>`, "sg-pulse", "animation-delay:-.8s")}`,
+  long_chain: `<path d="M-20 16 L12 -12" stroke-dasharray="3 2.5" stroke-width="2.6"/>${at(14, -14, `<circle r="6"/><circle r="2" fill="currentColor"/>`, "sg-spin")}`,
+  spinning_saw: `<g class="sg-spin-fast"><circle r="11"/>${[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `<path d="M${Math.cos((i * Math.PI) / 4) * 11} ${Math.sin((i * Math.PI) / 4) * 11} l${Math.cos((i * Math.PI) / 4 + 0.6) * 5} ${Math.sin((i * Math.PI) / 4 + 0.6) * 5}"/>`).join("")}</g>`,
+  stunning_lash: `<path d="M-20 14 q14 -4 30 -22" stroke-dasharray="3 2.5" stroke-width="2.6"/>${at(12, -10, `<circle r="5"/>`)}${at(0, -16, SPARK, "sg-twinkle")}${at(8, -20, SPARK, "sg-twinkle", "animation-delay:-.4s")}${at(18, -16, SPARK, "sg-twinkle", "animation-delay:-.8s")}`,
   // ── Cursed relics ──
   pact: `<path d="M-11 -14 h22 q0 14 -11 16 q-11 -2 -11 -16z M0 2 v10 M-7 14 h14"/>${at(0, -6, `<path d="M0 0 q-3 4 0 6 q3 -2 0 -6z" fill="currentColor"/>`, "sg-drip")}`,
   halo: `<g class="sg-bob"><ellipse rx="15" ry="5" cy="-6"/><path d="M-3 -11 l2 4 l-2 3" stroke-width="1.8"/></g>${at(0, 10, `<path d="M-6 0 h12" stroke-opacity=".5"/>`, "sg-pulse")}`,
@@ -99,7 +120,7 @@ const ART: Record<string, string> = {
 
 /** Inline SVG emblem for a blessing / relic / move id (also "lvl:<id>"), or null if there is none. */
 export function sigilSvg(id: string): string | null {
-  const key = id.startsWith("lvl:") || id.startsWith("asp:") ? id.slice(4) : id;
+  const key = id.startsWith("lvl:") || id.startsWith("asp:") || id.startsWith("anv:") ? id.slice(4) : id;
   const art = ART[key];
   if (!art) return null;
   return `<svg class="ros-sigil" viewBox="-32 -32 64 64" aria-hidden="true">

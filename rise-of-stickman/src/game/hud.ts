@@ -6,6 +6,7 @@ import { MAG } from "./player";
 import { RANKS } from "./style";
 import { iconCanvas, ICON_COLOR, type IconKind } from "./textures";
 import { sigilSvg } from "./sigils";
+import { ANVIL } from "./anvil";
 
 function el(tag: string, cls: string, parent?: HTMLElement, html = "") {
   const e = document.createElement(tag);
@@ -234,6 +235,10 @@ export class Hud {
     for (const b of Object.values(l.slots)) if (b) add(b.element, `${b.name}: ${b.text}`, b.id, ELEMENT_COLOR[b.element]);
     for (const r of l.relics) add("relic", `${r.name}: ${r.boon} ${r.curse}`, r.id, "#5dff9a");
     for (const m of l.moves) add("move", m, m, "#ffffff");
+    for (const id of l.anvil) {
+      const u = Object.values(ANVIL).flat().find((x) => x.id === id);
+      add("anvil", u ? `${u.name}: ${u.text}` : id, id, "#c57bff");
+    }
   }
 
 /** Interaction hint above the hero (null hides it). */
