@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Game, type Card, type Quality, type RunStats, type UiEvent } from "./game";
 import type { Action } from "./input";
 import { CHANGES, CREDITS } from "./credits";
-import { loadModels } from "./models";
+import { loadModels, RUN_MODELS } from "./models";
 import { iconCanvas } from "./textures";
 
 type Screen = "title" | "intro" | "play" | "choose" | "paused" | "dead" | "victory";
@@ -34,16 +34,16 @@ export default function RiseOfStickman() {
   const hudRef = useRef<HTMLDivElement>(null);
   const game = useRef<Game | null>(null);
   const [screen, setScreen] = useState<Screen>("title");
-  const [choice, setChoice] = useState<{ title: string; cards: Card[] } | null>(null);
+  const [choice, setChoice] = useState<{ title: string; cards: Card[]; lord?: boolean } | null>(null);
   const [stats, setStats] = useState<RunStats | null>(null);
   const [bossCard, setBossCard] = useState<{ name: string; title: string } | null>(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [panel, setPanel] = useState<"none" | "controls" | "settings" | "credits">("none");
-  const [loaded, setLoaded] = useState<[number, number]>([0, 5]);
+  const [loaded, setLoaded] = useState<[number, number]>([0, RUN_MODELS.length]);
   const ready = loaded[0] >= loaded[1];
 
   useEffect(() => {
-    loadModels((d, t) => setLoaded([d, t])).catch(() => setLoaded([-1, 5]));
+    loadModels((d, t) => setLoaded([d, t])).catch(() => setLoaded([-1, RUN_MODELS.length]));
   }, []);
   const [storyIdx, setStoryIdx] = useState(0);
   const [touch, setTouch] = useState(() => typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches);
@@ -56,7 +56,7 @@ export default function RiseOfStickman() {
     (window as unknown as { __ros: Game }).__ros = g;
     g.onUi = (e: UiEvent) => {
       if (e.type === "choose") {
-        setChoice({ title: e.title, cards: e.cards });
+        setChoice({ title: e.title, cards: e.cards, lord: e.lord });
         setScreen("choose");
       } else if (e.type === "dead" || e.type === "victory") {
         setStats(e.stats);
@@ -213,12 +213,12 @@ export default function RiseOfStickman() {
       )}
 
       {screen === "choose" && choice && (
-        <div className="ros-screen ros-choose">
+        <div className={`ros-screen ros-choose${choice.lord ? " lord" : ""}`}>
           <h2>{choice.title}</h2>
           <p className="ros-sub">Choose one</p>
           <div className="ros-cards">
             {choice.cards.map((c) => (
-              <button key={c.id} className="ros-card" style={{ ["--c" as string]: c.color }} onClick={() => pick(c.id)}>
+              <button key={c.id} className="ros-card" style={{ ["--c" as string]: c.color, ["--r" as string]: c.rarity ?? c.color }} onClick={() => pick(c.id)}>
                 <Icon kind={c.icon} />
                 <small>{c.tag}</small>
                 <h3>{c.name}</h3>
@@ -311,6 +311,7 @@ function Controls({ touch }: { touch: boolean }) {
           <li><b>Parry</b> Press when an enemy flashes red to counter and execute</li>
           <li><b>Wrath</b> When the bar is full: become a burning demon</li>
           <li><b>Cyclone</b> Crimson Cyclone special</li>
+          <li><b>Use</b> Buy from the merchant, drink from the fountain</li>
         </ul>
       ) : (
         <ul>
@@ -319,7 +320,7 @@ function Controls({ touch }: { touch: boolean }) {
           <li><b>Right click (hold)</b> Twin revolvers · <b>R</b> Reload, and press again in the gold zone for a perfect reload</li>
           <li><b>Space</b> Shadow dash · click right after = <i>Rift Cut</i></li>
           <li><b>Shift</b> Parry when an enemy flashes red → execution</li>
-          <li><b>Q</b> Wrath form · <b>E</b> Crimson Cyclone · <b>Esc</b> Pause</li>
+          <li><b>Q</b> Wrath form · <b>E</b> Crimson Cyclone · <b>F</b> Buy / drink · <b>Esc</b> Pause</li>
         </ul>
       )}
       <p>Mix sword, guns, dodges and parries to raise your <b>style rank</b> (D → SSS). Getting hit drops it.</p>
@@ -418,6 +419,7 @@ function TouchControls({ game, onPause }: { game: React.RefObject<Game | null>; 
         {btn("parry", "Parry", "parry")}
         {btn("special", "Cyclone", "special")}
         {btn("wrath", "Wrath", "wrath")}
+        {btn("interact", "Use", "use")}
       </div>
       <button className="ros-tpause" onTouchStart={(e) => { e.preventDefault(); onPause(); }}>❚❚</button>
     </div>

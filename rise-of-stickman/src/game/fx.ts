@@ -102,17 +102,17 @@ const arcFrag = /* glsl */ `
     float r = vUv.y;            // 0 = inner edge, 1 = outer edge
     float head = progress;
     if (a > head) discard;
-    float tail = smoothstep(head - 0.9, head, a);
-    float edge = pow(r, 1.8);
+    float tail = smoothstep(head - 0.55, head, a);
+    float edge = pow(r, 2.8);
     float body = tail * edge;
-    float hot = smoothstep(0.82, 1.0, r) * tail;
+    float hot = smoothstep(0.9, 1.0, r) * tail;
     vec3 c = mix(color, core, hot);
-    float alpha = clamp(body * 1.8, 0.0, 1.0) * fade;
+    float alpha = clamp(body * 1.1, 0.0, 0.7) * fade;
     if (alpha < 0.01) discard;
-    gl_FragColor = vec4(c * (1.0 + hot * 2.0), alpha);
+    gl_FragColor = vec4(c * (1.0 + hot * 0.5), alpha);
   }`;
 
-const WHITE = new THREE.Color(3, 3, 3);
+const WHITE = new THREE.Color(1.1, 1.1, 1.15);
 
 type Arc = { mesh: THREE.Mesh; mat: THREE.ShaderMaterial; t: number; dur: number; sweep: number; live: boolean };
 
@@ -660,7 +660,7 @@ export class Fx {
       a.t += dt;
       const u = a.t / a.dur;
       a.mat.uniforms.progress.value = Math.min(1, u * 2.2) + 0.001;
-      a.mat.uniforms.fade.value = u < 0.45 ? 1 : Math.max(0, 1 - (u - 0.45) / 0.55);
+      a.mat.uniforms.fade.value = u < 0.3 ? 1 : Math.max(0, 1 - (u - 0.3) / 0.7);
       if (u >= 1) {
         a.live = false;
         a.mesh.visible = false;

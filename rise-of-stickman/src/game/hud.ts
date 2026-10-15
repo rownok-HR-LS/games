@@ -1,6 +1,8 @@
 // DOM heads-up display, updated straight from the game loop (no React re-renders per frame).
+import * as THREE from "three";
 import type { Loadout } from "./boons";
 import type { Game } from "./game";
+import { MAG } from "./player";
 import { RANKS } from "./style";
 import { iconCanvas, ICON_COLOR, type IconKind } from "./textures";
 
@@ -12,7 +14,29 @@ function el(tag: string, cls: string, parent?: HTMLElement, html = "") {
   return e;
 }
 
+export type Marker = {
+  x: number;
+  y: number;
+  icon: IconKind;
+  title: string;
+  sub: string;
+  color: string;
+  /** Radians, when the target is off-screen (arrow points toward it). */
+  arrow: number | null;
+};
+
+/** An enemy health bar, already projected to screen space. */
+export type EnemyBar = { id: number; x: number; y: number; hp: number; shield: number; wide: boolean; elite: string | null };
+
+type BarEl = { el: HTMLElement; fill: HTMLElement; lag: HTMLElement; sh: HTMLElement; lagF: number; f: number; used: boolean };
+type Floater = { el: HTMLElement; pos: THREE.Vector3; t: number; dur: number; dx: number };
+
 export class Hud {
+  private bars = new Map<number, BarEl>();
+  private floaters: Floater[] = [];
+  private floatLayer!: HTMLElement;
+  private markerEls: HTMLElement[] = [];
+  private iconUrls = new Map<IconKind, string>();
   private root: HTMLElement;
   private hpFill: HTMLElement;
   private hpLag: HTMLElement;
@@ -23,6 +47,11 @@ export class Hud {
   private dash: HTMLElement[] = [];
   private special: HTMLElement;
   private souls: HTMLElement;
+  private coins: HTMLElement;
+  private defiance: HTMLElement;
+  private promptEl: HTMLElement;
+  private sayEl: HTMLElement;
+  private sayT: ReturnType<typeof setTimeout> | null = null;
   private roomLbl: HTMLElement;
   private rankBox: HTMLElement;
   private rankLetter: HTMLElement;
@@ -60,7 +89,7 @@ export class Hud {
     el("span", "rs-wrath-text", this.wrathBox, "WRATH <b>Q</b>");
     const row = el("div", "rs-row", tl);
     const ammo = el("div", "rs-ammo", row);
-    for (let i = 0; i < 12; i++) this.ammo.push(el("i", "", ammo));
+    for (let i = 0; i < MAG; i++) this.ammo.push(el("i", "", ammo));
     const dash = el("div", "rs-dash", row);
     for (let i = 0; i < 4; i++) this.dash.push(el("i", "", dash));
     this.special = el("div", "rs-special", row, "<span>E</span>");
@@ -68,6 +97,8 @@ export class Hud {
 
     const tr = el("div", "rs-tr", root);
     this.souls = el("div", "rs-souls", tr);
+    this.coins = el("div", "rs-coins", tr);
+    this.defiance = el("div", "rs-defiance", tl);
     this.roomLbl = el("div", "rs-roomlbl", tr);
 
     this.rankBox = el("div", "rs-rank", root);
@@ -88,6 +119,8 @@ export class Hud {
     el("span", "rs-reload-hint", this.reload, "R");
 
     this.toasts = el("div", "rs-toasts", root);
+    this.promptEl = el("div", "rs-prompt", root);
+    this.sayEl = el("div", "rs-say", root);
     this.hurtV = el("div", "rs-hurt", root);
     this.lbTop = el("div", "rs-lb rs-lb-top", root);
     this.lbBot = el("div", "rs-lb rs-lb-bot", root);
@@ -133,6 +166,10 @@ export class Hud {
       this.special.classList.toggle("ready", sp <= 0);
     });
     this.set("souls", Math.round(g.souls), () => (this.souls.innerHTML = `<i></i>${Math.round(g.souls)}`));
+    this.set("coins", g.coins, () => (this.coins.innerHTML = `<i></i>${g.coins}`));
+    this.set("def", p.defiance * 10 + p.defianceMax, () => {
+      this.defiance.innerHTML = Array.from({ length: p.defianceMax }, (_, i) => `<i class="${i < p.defiance ? "on" : ""}" title="Death Defiance"></i>`).join("");
+    });
     // Style rank.
     this.set("rankbar", Math.round(g.style.frac * 200), () => (this.rankBar.style.width = `${g.style.frac * 100}%`));
     this.rankBox.classList.toggle("idle", g.style.points < 5);
@@ -193,6 +230,125 @@ export class Hud {
     for (const b of Object.values(l.slots)) if (b) add(b.element, `${b.name}: ${b.text}`);
     for (const r of l.relics) add("relic", `${r.name}: ${r.boon} ${r.curse}`);
     for (const m of l.moves) add("move", m);
+  }
+
+/** Interaction hint above the hero (null hides it). */
+  prompt(text: string | null) {
+    this.set("prompt", text ?? "", () => {
+      this.promptEl.classList.toggle("on", !!text);
+      if (text) this.promptEl.innerHTML = `<b>F</b> ${text}`;
+    });
+  }
+
+  /** A line of dialogue at the bottom of the screen. */
+  say(who: string, line: string) {
+    this.sayEl.innerHTML = `<b>${who}</b>${line}`;
+    this.sayEl.classList.add("on");
+    if (this.sayT) clearTimeout(this.sayT);
+    this.sayT = setTimeout(() => this.sayEl.classList.remove("on"), 3800);
+  }
+
+/** Screen-space labels for doors and shop items (always readable, pinned to the edge when off-screen). */
+  markers(list: Marker[]) {
+    while (this.markerEls.length < list.length) {
+      const m = el("div", "rs-marker", this.root, "<i></i><div><b></b><span></span></div><em></em>");
+      this.markerEls.push(m);
+    }
+    this.markerEls.forEach((m, i) => {
+      const k = list[i];
+      if (!k) {
+        if (m.style.display !== "none") m.style.display = "none";
+        return;
+      }
+      m.style.display = "";
+      m.style.transform = `translate(${Math.round(k.x)}px, ${Math.round(k.y)}px) translate(-50%, -50%)`;
+      const key = k.icon + k.title + k.sub + k.color;
+      if (m.dataset.key !== key) {
+        m.dataset.key = key;
+        let url = this.iconUrls.get(k.icon);
+        if (!url) {
+          url = iconCanvas(k.icon).toDataURL();
+          this.iconUrls.set(k.icon, url);
+        }
+        (m.children[0] as HTMLElement).style.backgroundImage = `url(${url})`;
+        m.querySelector("b")!.textContent = k.title;
+        m.querySelector("span")!.textContent = k.sub;
+        m.style.setProperty("--c", k.color);
+      }
+      const arrow = m.querySelector("em") as HTMLElement;
+      arrow.style.display = k.arrow === null ? "none" : "";
+      if (k.arrow !== null) arrow.style.transform = `rotate(${k.arrow}rad)`;
+    });
+  }
+
+/** Health bars over enemies: red fill, a white chip trail that drains after the hit, gold shield on top. */
+  enemyBars(list: EnemyBar[], real: number) {
+    if (!this.floatLayer) this.floatLayer = el("div", "rs-floats", this.root);
+    for (const b of this.bars.values()) b.used = false;
+    for (const k of list) {
+      let b = this.bars.get(k.id);
+      if (!b) {
+        const e = el("div", "rs-ebar", this.floatLayer, "<i class=lag></i><i class=fill></i><i class=sh></i>");
+        b = { el: e, lag: e.children[0] as HTMLElement, fill: e.children[1] as HTMLElement, sh: e.children[2] as HTMLElement, lagF: k.hp, f: -1, used: true };
+        this.bars.set(k.id, b);
+        e.classList.toggle("wide", k.wide);
+        if (k.elite) {
+          e.classList.add("elite");
+          e.style.setProperty("--e", k.elite);
+        }
+      }
+      b.used = true;
+      // The chip trail waits a moment, then drains toward the real value.
+      if (k.hp < b.f) b.lagF = Math.max(b.lagF, b.f);
+      b.lagF = Math.max(k.hp, b.lagF - real * 0.9);
+      if (b.f !== k.hp) {
+        b.fill.style.width = `${k.hp * 100}%`;
+        b.f = k.hp;
+      }
+      b.lag.style.width = `${b.lagF * 100}%`;
+      b.sh.style.width = `${k.shield * 100}%`;
+      b.el.style.transform = `translate(${Math.round(k.x)}px, ${Math.round(k.y)}px) translate(-50%, -100%)`;
+    }
+    for (const [id, b] of this.bars)
+      if (!b.used) {
+        b.el.remove();
+        this.bars.delete(id);
+      }
+  }
+
+  /** Floating damage number at a world position (style: "", "crit", "heavy", "gun", "dot", "shield"). */
+  popNumber(pos: THREE.Vector3, amount: number, style: string, color?: string) {
+    if (!this.floatLayer) this.floatLayer = el("div", "rs-floats", this.root);
+    if (this.floaters.length > 48) this.floaters.shift()!.el.remove();
+    const e = el("div", `rs-dmg ${style}`, this.floatLayer);
+    e.textContent = `${Math.max(1, Math.round(amount))}`;
+    if (color) e.style.color = color;
+    this.floaters.push({ el: e, pos: pos.clone(), t: 0, dur: style === "crit" ? 1.0 : 0.8, dx: (Math.random() - 0.5) * 36 });
+  }
+
+  /** Moves damage numbers each frame (project returns false when off-screen). */
+  updateNumbers(real: number, project: (v: THREE.Vector3, out: { x: number; y: number }) => boolean) {
+    const o = { x: 0, y: 0 };
+    this.floaters = this.floaters.filter((f) => {
+      f.t += real;
+      if (f.t >= f.dur || !project(f.pos, o)) {
+        f.el.remove();
+        return false;
+      }
+      const u = f.t / f.dur;
+      const rise = 46 * (1 - (1 - u) * (1 - u));
+      const pop = u < 0.12 ? 0.6 + (u / 0.12) * 0.75 : u < 0.25 ? 1.35 - ((u - 0.12) / 0.13) * 0.35 : 1;
+      f.el.style.opacity = `${u < 0.6 ? 1 : 1 - (u - 0.6) / 0.4}`;
+      f.el.style.transform = `translate(${Math.round(o.x + f.dx * u)}px, ${Math.round(o.y - rise)}px) translate(-50%, -50%) scale(${pop.toFixed(3)})`;
+      return true;
+    });
+  }
+
+  clearFloaters() {
+    for (const f of this.floaters) f.el.remove();
+    this.floaters = [];
+    for (const b of this.bars.values()) b.el.remove();
+    this.bars.clear();
   }
 
   toast(text: string, color: string) {

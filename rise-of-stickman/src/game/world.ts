@@ -2,9 +2,10 @@
 // at the back (where the doors are), the near edges open to the drop. Floor 1 is the Bone Pits.
 import * as THREE from "three";
 import type { Fx } from "./fx";
-import type { Reward } from "./boons";
-import { rewardIcon } from "./boons";
-import { floorTextures, glowTexture, iconTexture, ICON_COLOR, wallTexture } from "./textures";
+import { doorIcon, type DoorPlan } from "./boons";
+import type { Game } from "./game";
+import { SpikePlate } from "./traps";
+import { floorTextures, glowTexture, iconCanvas, ICON_COLOR, wallTexture, type IconKind } from "./textures";
 
 export type Door = {
   pos: THREE.Vector3;
@@ -14,14 +15,19 @@ export type Door = {
   portal: THREE.Mesh;
   portalMat: THREE.ShaderMaterial;
   bars: THREE.Group;
-  icon: THREE.Sprite;
+  /** Bronze reward medallion hovering in the doorway. */
+  medal: THREE.Group;
+  medalFace: THREE.MeshBasicMaterial[];
+  medalRim: THREE.MeshStandardMaterial;
+  halo: THREE.Sprite;
+  rune: THREE.Mesh;
   light: THREE.PointLight;
-  reward: Reward | null;
+  plan: DoorPlan | null;
   open: boolean;
   t: number;
 };
 
-type Brazier = { pos: THREE.Vector3; light: THREE.PointLight; base: number };
+type Brazier = { pos: THREE.Vector3; light: THREE.PointLight; base: number; coal: THREE.MeshStandardMaterial };
 
 const portalFrag = /* glsl */ `
   varying vec2 vUv; uniform float time; uniform vec3 color; uniform float open;
@@ -34,8 +40,9 @@ const portalFrag = /* glsl */ `
     float a = atan(p.y, p.x);
     float sw = n(vec2(a * 3.0 + time * 1.5 - r * 8.0, r * 6.0 - time * 2.0));
     float core = smoothstep(0.55, 0.0, r);
-    vec3 c = mix(vec3(0.0), color * (0.25 + sw * 0.8), core * open);
-    c += color * pow(core, 4.0) * 0.7 * open;
+    float rays = n(vec2(a * 6.0, time * 0.7)) * smoothstep(0.6, 0.1, r);
+    vec3 c = color * (0.06 + sw * 0.28 + rays * 0.12) * core * open;
+    c += color * pow(core, 6.0) * 0.22 * open;
     gl_FragColor = vec4(c, 1.0);
   }`;
 
@@ -77,7 +84,17 @@ function buildShared() {
   const iron = new THREE.MeshStandardMaterial({ color: 0x2a2626, roughness: 0.45, metalness: 0.85 });
   const darkStone = new THREE.MeshStandardMaterial({ color: 0x1a1312, roughness: 0.95 });
   const glow = glowTexture();
-  return { floor, wall, bone, iron, darkStone, glow };
+  // Bowl profile (lathe): narrow foot flaring to a wide lip.
+  const prof = [
+    [0.12, 0], [0.2, 0.05], [0.3, 0.14], [0.45, 0.27], [0.58, 0.38], [0.62, 0.42], [0.6, 0.43], [0.5, 0.36], [0.0, 0.3],
+  ].map(([x, y]) => new THREE.Vector2(x, y));
+  const bowlGeo = new THREE.LatheGeometry(prof, 20);
+  const coalGeo = new THREE.DodecahedronGeometry(0.09, 0);
+  const rubbleGeo = new THREE.DodecahedronGeometry(0.16, 0);
+  const rubble = new THREE.MeshStandardMaterial({ map: wall, color: 0x7a6a64, roughness: 0.95 });
+  const inlay = inlayTextures();
+  const stains = stainTexture();
+  return { floor, wall, bone, iron, darkStone, glow, bowlGeo, coalGeo, rubbleGeo, rubble, inlay, stains };
 }
 
 export class Room {
@@ -90,17 +107,20 @@ export class Room {
   private braziers: Brazier[] = [];
   private animated: { mat: THREE.ShaderMaterial }[] = [];
   private floorMat: THREE.MeshStandardMaterial;
+  private sigilMat!: THREE.MeshStandardMaterial;
+  private flameCol = new THREE.Color();
   private time = 0;
   private emberT = 0;
   readonly boss: boolean;
+  readonly traps: SpikePlate[] = [];
 
-  constructor(seed: number, opts: { boss?: boolean; doors: number }) {
+  constructor(seed: number, opts: { boss?: boolean; doors: number; traps?: number; small?: boolean }) {
     shared ??= buildShared();
     const S = shared;
     const r = rng(seed * 7919 + 13);
     this.boss = !!opts.boss;
-    this.hx = this.boss ? 15 : 9 + Math.floor(r() * 4);
-    this.hz = this.boss ? 15 : 9 + Math.floor(r() * 4);
+    this.hx = this.boss ? 15 : opts.small ? 8 : 9 + Math.floor(r() * 4);
+    this.hz = this.boss ? 15 : opts.small ? 8 : 9 + Math.floor(r() * 4);
     const { hx, hz } = this;
     const g = this.group;
 
@@ -108,14 +128,17 @@ export class Room {
     const fm = new THREE.MeshStandardMaterial({
       map: S.floor.map.clone(),
       emissiveMap: S.floor.emissive.clone(),
-      emissive: new THREE.Color(1, 0.45, 0.2),
-      emissiveIntensity: 0.9,
-      roughness: 0.88,
-      metalness: 0.05,
+      normalMap: S.floor.normal.clone(),
+      normalScale: new THREE.Vector2(1.1, 1.1),
+      emissive: new THREE.Color(1, 0.42, 0.16),
+      emissiveIntensity: 0.8,
+      roughness: 0.82,
+      metalness: 0.06,
     });
-    for (const t of [fm.map!, fm.emissiveMap!]) {
-      t.repeat.set((hx * 2) / 9, (hz * 2) / 9);
-      t.offset.set(r(), r());
+    const fo = [r(), r()];
+    for (const t of [fm.map!, fm.emissiveMap!, fm.normalMap!]) {
+      t.repeat.set((hx * 2) / 8, (hz * 2) / 8);
+      t.offset.set(fo[0], fo[1]);
       t.needsUpdate = true;
     }
     this.floorMat = fm;
@@ -300,6 +323,73 @@ export class Room {
       this.pillars.push({ x, z, r: 0.95 });
     }
 
+    // ── Floor dressing ──
+    // Carved summoning circle inlaid in the middle of the chamber (where rewards appear).
+    this.sigilMat = new THREE.MeshStandardMaterial({
+      map: S.inlay.map,
+      emissiveMap: S.inlay.glow,
+      emissive: new THREE.Color(1, 0.35, 0.1),
+      emissiveIntensity: 0.5,
+      transparent: true,
+      depthWrite: false,
+      roughness: 0.7,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    const sigilSize = this.boss ? 13 : 7.5;
+    const sigil = new THREE.Mesh(new THREE.PlaneGeometry(sigilSize, sigilSize).rotateX(-Math.PI / 2), this.sigilMat);
+    sigil.position.y = 0.01;
+    sigil.rotation.y = r() * Math.PI;
+    sigil.receiveShadow = true;
+    g.add(sigil);
+    // Dark stains: old blood and soot.
+    for (let i = 0; i < (this.boss ? 14 : 8); i++) {
+      const x = (r() * 2 - 1) * (hx - 1);
+      const z = (r() * 2 - 1) * (hz - 1);
+      if (Math.hypot(x, z) < 4 || nearDoor(x, z, 2.5)) continue;
+      const sz = 1.4 + r() * 2.6;
+      const m = new THREE.MeshBasicMaterial({
+        map: S.stains,
+        color: r() < 0.55 ? 0x3a0604 : 0x050302,
+        transparent: true,
+        opacity: 0.35 + r() * 0.3,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      });
+      const st = new THREE.Mesh(new THREE.PlaneGeometry(sz, sz).rotateX(-Math.PI / 2), m);
+      st.position.set(x, 0.008, z);
+      st.rotation.y = r() * Math.PI * 2;
+      g.add(st);
+    }
+    // Rubble along the back walls and around pillars.
+    const rubbleSpots: [number, number, number][] = [];
+    for (let i = 0; i < 70; i++) {
+      const t = r() * 2 - 1;
+      const onNorth = r() < 0.5;
+      const x = onNorth ? t * (hx - 0.5) : -hx + 0.35 + r() * 1.1;
+      const z = onNorth ? -hz + 0.35 + r() * 1.1 : t * (hz - 0.5);
+      if (nearDoor(x, z, 2.6)) continue;
+      rubbleSpots.push([x, z, 0.5 + r() * 1.6]);
+    }
+    for (const pl of this.pillars)
+      for (let k = 0; k < 6; k++) {
+        const a = r() * Math.PI * 2;
+        const d = pl.r + 0.15 + r() * 0.5;
+        rubbleSpots.push([pl.x + Math.cos(a) * d, pl.z + Math.sin(a) * d, 0.4 + r() * 1.1]);
+      }
+    const rub = new THREE.InstancedMesh(S.rubbleGeo, S.rubble, rubbleSpots.length);
+    rubbleSpots.forEach(([x, z, sc], i) => {
+      dmy0.position.set(x, 0.06 * sc, z);
+      dmy0.rotation.set(r() * 3, r() * 3, r() * 3);
+      dmy0.scale.set(sc, sc * (0.5 + r() * 0.5), sc);
+      dmy0.updateMatrix();
+      rub.setMatrixAt(i, dmy0.matrix);
+    });
+    rub.castShadow = true;
+    rub.receiveShadow = true;
+    g.add(rub);
+
     // ── Bones and skulls ──
     const boneGeo = new THREE.CapsuleGeometry(0.028, 0.32, 2, 6);
     const nBones = this.boss ? 70 : 34;
@@ -350,29 +440,76 @@ export class Room {
       : [new THREE.Vector3(-hx + 1.6, 0, -hz + 1.6), r() < 0.5 ? new THREE.Vector3(hx - 2, 0, -hz + 1.6) : new THREE.Vector3(-hx + 1.6, 0, hz - 2)];
     for (const p of bspots) {
       if (nearDoor(p.x, p.z, 2)) p.x += 2.5;
-      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.3, 0.45, 10, 1, true), S.iron);
-      bowl.position.set(p.x, 1.25, p.z);
-      g.add(bowl);
-      const coal = new THREE.Mesh(
-        new THREE.CircleGeometry(0.55, 10),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 1, 0.2) }),
-      );
-      coal.rotation.x = -Math.PI / 2;
-      coal.position.set(p.x, 1.4, p.z);
-      g.add(coal);
-      for (let k = 0; k < 3; k++) {
-        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.2), S.iron);
-        const a = (k / 3) * Math.PI * 2;
-        leg.position.set(p.x + Math.cos(a) * 0.3, 0.6, p.z + Math.sin(a) * 0.3);
-        leg.rotation.set(Math.sin(a) * 0.25, 0, -Math.cos(a) * 0.25);
-        g.add(leg);
+      const br = new THREE.Group();
+      br.position.set(p.x, 0, p.z);
+      br.rotation.y = r() * Math.PI;
+      const bowl = new THREE.Mesh(S.bowlGeo, S.iron);
+      bowl.position.y = 1.05;
+      bowl.castShadow = true;
+      br.add(bowl);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.05, 6, 24).rotateX(Math.PI / 2), S.iron);
+      rim.position.y = 1.47;
+      br.add(rim);
+      // Horn-like spikes around the rim.
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2;
+        const sp = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.28, 5), S.iron);
+        sp.position.set(Math.cos(a) * 0.62, 1.58, Math.sin(a) * 0.62);
+        sp.rotation.set(Math.sin(a) * 0.5, 0, -Math.cos(a) * 0.5);
+        br.add(sp);
       }
-      const light = new THREE.PointLight(0xff7a2a, 22, 11, 1.6);
-      light.position.set(p.x, 2.2, p.z);
+      // Tripod with clawed feet.
+      for (let k = 0; k < 3; k++) {
+        const a = (k / 3) * Math.PI * 2;
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 1.15, 6), S.iron);
+        leg.position.set(Math.cos(a) * 0.32, 0.55, Math.sin(a) * 0.32);
+        leg.rotation.set(Math.sin(a) * 0.32, 0, -Math.cos(a) * 0.32);
+        leg.castShadow = true;
+        br.add(leg);
+        const claw = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 5), S.iron);
+        claw.position.set(Math.cos(a) * 0.52, 0.06, Math.sin(a) * 0.52);
+        claw.rotation.set(Math.sin(a) * 1.3, 0, -Math.cos(a) * 1.3);
+        br.add(claw);
+      }
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.03, 5, 18).rotateX(Math.PI / 2), S.iron);
+      ring.position.y = 0.55;
+      br.add(ring);
+      // Heap of coals: dark chunks with a glowing core.
+      const coalMat = new THREE.MeshStandardMaterial({ color: 0x140806, roughness: 0.9, emissive: new THREE.Color(1.0, 0.28, 0.04), emissiveIntensity: 1 });
+      for (let k = 0; k < 11; k++) {
+        const a = r() * Math.PI * 2;
+        const d = r() * 0.42;
+        const ch = new THREE.Mesh(S.coalGeo, k % 3 === 0 ? S.darkStone : coalMat);
+        ch.position.set(Math.cos(a) * d, 1.38 + (0.42 - d) * 0.25, Math.sin(a) * d);
+        ch.rotation.set(r() * 3, r() * 3, r() * 3);
+        ch.scale.setScalar(0.8 + r() * 0.8);
+        br.add(ch);
+      }
+      g.add(br);
+      const light = new THREE.PointLight(0xff7a2a, 15, 10, 1.6);
+      light.position.set(p.x, 2.3, p.z);
       g.add(light);
-      this.braziers.push({ pos: new THREE.Vector3(p.x, 1.4, p.z), light, base: 22 });
+      this.braziers.push({ pos: new THREE.Vector3(p.x, 1.45, p.z), light, base: 15, coal: coalMat });
       this.pillars.push({ x: p.x, z: p.z, r: 0.6 });
     }
+
+    // ── Spike plates ──
+    const spots: [number, number][] = [];
+    for (let i = 0; i < (opts.traps ?? 0) * 12 && spots.length < (opts.traps ?? 0); i++) {
+      const x = (r() * 2 - 1) * (hx - 2.5);
+      const z = (r() * 2 - 1) * (hz - 2.5);
+      if (Math.hypot(x, z) < 2.5) continue; // keep the reward spot clear
+      if (Math.hypot(x - (hx - 2.2), z - (hz - 2.2)) < 4) continue; // and the entrance
+      if (nearDoor(x, z, 3.5)) continue;
+      if (this.pillars.some((c) => Math.hypot(c.x - x, c.z - z) < c.r + 1.6)) continue;
+      if (spots.some(([a, b]) => Math.hypot(a - x, b - z) < 3.4)) continue;
+      spots.push([x, z]);
+    }
+    for (const [x, z] of spots) this.traps.push(new SpikePlate(g, x, z));
+  }
+
+  updateTraps(dt: number, game: Game) {
+    for (const t of this.traps) t.update(dt, game);
   }
 
   private buildDoor(pos: THREE.Vector3, normal: THREE.Vector3): Door {
@@ -421,29 +558,59 @@ export class Room {
       bars.add(b);
     }
     grp.add(bars);
-    const icon = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-    icon.position.set(0, 2.5, 0.9);
-    icon.scale.set(1.9, 1.9, 1);
-    icon.visible = false;
-    grp.add(icon);
-    const light = new THREE.PointLight(0xff3010, 0, 9, 1.6);
-    light.position.set(0, 2.2, 1.6);
+    // Stone steps up to the threshold.
+    for (const [w, d, y, z] of [
+      [4.6, 1.1, 0.09, 0.9],
+      [3.8, 0.7, 0.2, 0.55],
+    ]) {
+      const step = new THREE.Mesh(new THREE.BoxGeometry(w, y * 2, d), stone);
+      step.position.set(0, y / 2, z);
+      step.receiveShadow = true;
+      grp.add(step);
+    }
+    // Reward medallion: a spiked bronze disc with the reward symbol on both faces.
+    const { group: medal, faces: medalFace, rim: medalRim } = buildMedal();
+    medal.position.set(0, 3.0, 1.45);
+    medal.scale.setScalar(0.01);
+    medal.visible = false;
+    grp.add(medal);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: S.glow, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 }));
+    halo.position.set(0, 3.0, 1.2);
+    halo.scale.setScalar(3.6);
+    grp.add(halo);
+    // Glowing threshold rune on the floor.
+    const rune = new THREE.Mesh(
+      new THREE.RingGeometry(1.55, 1.75, 40, 1, 0, Math.PI).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xff3010, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    rune.rotation.y = Math.PI;
+    rune.position.set(0, 0.22, 0.6);
+    grp.add(rune);
+    const light = new THREE.PointLight(0xff3010, 0, 8, 1.8);
+    light.position.set(0, 2.8, 2.4);
     grp.add(light);
     this.group.add(grp);
-    return { pos: pos.clone(), normal, group: grp, portal, portalMat, bars, icon, light, reward: null, open: false, t: 0 };
+    return { pos: pos.clone(), normal, group: grp, portal, portalMat, bars, medal, medalFace, medalRim, halo, rune, light, plan: null, open: false, t: 0 };
   }
 
-  /** Light up a door with a reward behind it. */
-  openDoor(d: Door, reward: Reward) {
-    d.reward = reward;
+  /** Light up a door with what lies behind it: the reward icon, plus a badge for special rooms. */
+  openDoor(d: Door, plan: DoorPlan) {
+    d.plan = plan;
     d.open = true;
     d.t = 0;
-    const kind = rewardIcon(reward);
-    const col = new THREE.Color(ICON_COLOR[kind]);
+    const kind = doorIcon(plan);
+    const col = new THREE.Color(plan.type === "elite" ? "#ff3a2a" : plan.type === "abyss" ? "#b06bff" : ICON_COLOR[kind]);
+    const ring = plan.type === "elite" || plan.type === "miniboss" || plan.type === "boss" ? "#ff3a2a" : plan.type === "abyss" ? "#b06bff" : null;
+    const tex = medalTexture(kind, ring);
+    for (const m of d.medalFace) {
+      m.map = tex;
+      m.needsUpdate = true;
+    }
+    d.medalRim.emissive.copy(col).multiplyScalar(0.12);
+    d.medal.visible = true;
     d.portalMat.uniforms.color.value.copy(col);
-    (d.icon.material as THREE.SpriteMaterial).map = iconTexture(kind);
-    (d.icon.material as THREE.SpriteMaterial).needsUpdate = true;
-    d.icon.visible = true;
+    (d.halo.material as THREE.SpriteMaterial).color.copy(col);
+    (d.rune.material as THREE.MeshBasicMaterial).color.copy(col);
     d.light.color.copy(col);
   }
 
@@ -468,11 +635,31 @@ export class Room {
   update(dt: number, fx: Fx) {
     this.time += dt;
     for (const a of this.animated) a.mat.uniforms.time.value = this.time;
-    this.floorMat.emissiveIntensity = 0.75 + Math.sin(this.time * 1.7) * 0.18 + Math.sin(this.time * 4.3) * 0.05;
+    this.floorMat.emissiveIntensity = 0.7 + Math.sin(this.time * 1.7) * 0.14 + Math.sin(this.time * 4.3) * 0.04;
+    this.sigilMat.emissiveIntensity = 0.24 + Math.sin(this.time * 1.1) * 0.09;
     for (const b of this.braziers) {
-      b.light.intensity = b.base * (0.85 + Math.sin(this.time * 13 + b.pos.x) * 0.08 + Math.random() * 0.12);
-      if (Math.random() < dt * 30) fx.fire(b.pos, 1, 0.5, 1);
-      if (Math.random() < dt * 3) fx.embers(b.pos, 1, 0.4);
+      const flick = 0.85 + Math.sin(this.time * 13 + b.pos.x) * 0.07 + Math.random() * 0.1;
+      b.light.intensity = b.base * flick;
+      b.coal.emissiveIntensity = 0.8 + flick * 0.5;
+      // A calm, compact flame: warm orange tongues that shrink as they rise (no white blow-out).
+      if (Math.random() < dt * 22) {
+        const hot = Math.random();
+        fx.emit({
+          x: b.pos.x + (Math.random() - 0.5) * 0.45,
+          y: b.pos.y + 0.05,
+          z: b.pos.z + (Math.random() - 0.5) * 0.45,
+          vx: (Math.random() - 0.5) * 0.3,
+          vy: 1.1 + Math.random() * 1.0,
+          vz: (Math.random() - 0.5) * 0.3,
+          color: this.flameCol.setRGB(1.2 + hot * 0.4, 0.34 + hot * 0.22, 0.05),
+          size: 0.16 + Math.random() * 0.14,
+          life: 0.35 + Math.random() * 0.3,
+          additive: true,
+          shrink: true,
+          drag: 1.2,
+        });
+      }
+      if (Math.random() < dt * 2.5) fx.embers(b.pos, 1, 0.3);
     }
     for (const d of this.doors) {
       if (!d.open) continue;
@@ -480,8 +667,19 @@ export class Room {
       const u = Math.min(1, d.t / 0.8);
       d.portalMat.uniforms.open.value = u;
       d.bars.position.y = u * 5.2;
-      d.light.intensity = 8 * u * (0.9 + Math.sin(this.time * 6) * 0.1);
-      d.icon.position.y = 2.5 + Math.sin(this.time * 2) * 0.12;
+      d.light.intensity = 3.2 * u * (0.9 + Math.sin(this.time * 6) * 0.1);
+      const pop = Math.min(1, Math.max(0, (d.t - 0.35) / 0.5));
+      const back = 1 + 2.70158 * Math.pow(pop - 1, 3) + 1.70158 * Math.pow(pop - 1, 2);
+      d.medal.scale.setScalar(Math.max(0.01, back));
+      d.medal.position.y = 3.0 + Math.sin(this.time * 1.8 + d.pos.x) * 0.1;
+      // Turn toward the isometric camera so the symbol reads face-on, with a gentle sway.
+      d.medal.rotation.set(-0.42, Math.PI / 4 - d.group.rotation.y + Math.sin(this.time * 0.9 + d.pos.z) * 0.18, 0, "YXZ");
+      (d.halo.material as THREE.SpriteMaterial).opacity = 0.14 * pop * (0.85 + Math.sin(this.time * 3) * 0.15);
+      (d.rune.material as THREE.MeshBasicMaterial).opacity = 0.55 * u * (0.75 + Math.sin(this.time * 2.4) * 0.25);
+      const danger = d.plan && (d.plan.type === "elite" || d.plan.type === "miniboss" || d.plan.type === "boss");
+      if (danger && Math.random() < dt * 24) {
+        for (const sx of [-1.75, 1.75]) fx.fire(d.group.localToWorld(v.set(sx, 4.35, 0.25)), 1, 0.2, 0.8);
+      }
     }
     // Embers drifting up out of the abyss along the open edges.
     this.emberT += dt;
@@ -620,6 +818,179 @@ function bannerTexture() {
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+const v = new THREE.Vector3();
+/** A spiked bronze disc with a face on each side (faces get their map from medalTexture). */
+export function buildMedal() {
+  const medal = new THREE.Group();
+  const bronze = new THREE.MeshStandardMaterial({ color: 0x2a1c14, metalness: 0.85, roughness: 0.4 });
+  const rimMat = new THREE.MeshStandardMaterial({ color: 0xb98a48, metalness: 0.95, roughness: 0.28, emissive: new THREE.Color(0, 0, 0) });
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.92, 0.16, 48).rotateX(Math.PI / 2), bronze);
+  disc.castShadow = true;
+  medal.add(disc);
+  medal.add(new THREE.Mesh(new THREE.TorusGeometry(0.92, 0.075, 10, 56), rimMat));
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.36, 6), rimMat);
+    spike.position.set(Math.cos(a) * 1.08, Math.sin(a) * 1.08, 0);
+    spike.rotation.z = a - Math.PI / 2;
+    medal.add(spike);
+  }
+  const faces: THREE.MeshBasicMaterial[] = [];
+  for (const side of [1, -1]) {
+    const m = new THREE.MeshBasicMaterial({ transparent: true, color: new THREE.Color(0.8, 0.8, 0.8) });
+    const face = new THREE.Mesh(new THREE.CircleGeometry(0.84, 48), m);
+    face.position.z = side * 0.085;
+    if (side < 0) face.rotation.y = Math.PI;
+    medal.add(face);
+    faces.push(m);
+  }
+  return { group: medal, faces, rim: rimMat };
+}
+
+const dmy0 = new THREE.Object3D();
+
+/** Floor inlay: carved rings, a star and rune marks (dark colour map + thin glowing emissive lines). */
+function inlayTextures() {
+  const S = 1024;
+  const mk = () => {
+    const c = document.createElement("canvas");
+    c.width = c.height = S;
+    const g = c.getContext("2d")!;
+    g.translate(S / 2, S / 2);
+    return [c, g] as const;
+  };
+  const [mc, m] = mk();
+  const [gc, gl] = mk();
+  const star = (ctx: CanvasRenderingContext2D, rad: number) => {
+    ctx.beginPath();
+    for (let i = 0; i <= 7; i++) {
+      const a = -Math.PI / 2 + ((i * 3) % 7) * ((Math.PI * 2) / 7);
+      if (i === 0) ctx.moveTo(Math.cos(a) * rad, Math.sin(a) * rad);
+      else ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+    }
+    ctx.stroke();
+  };
+  // Carved grooves (dark) with a worn lighter lip.
+  for (const [rad, w] of [
+    [490, 22],
+    [440, 8],
+    [300, 14],
+    [120, 10],
+  ]) {
+    m.lineWidth = w + 6;
+    m.strokeStyle = "rgba(200,170,150,0.10)";
+    m.beginPath();
+    m.arc(2, 2, rad, 0, Math.PI * 2);
+    m.stroke();
+    m.lineWidth = w;
+    m.strokeStyle = "rgba(6,3,2,0.85)";
+    m.beginPath();
+    m.arc(0, 0, rad, 0, Math.PI * 2);
+    m.stroke();
+  }
+  m.lineWidth = 10;
+  m.strokeStyle = "rgba(6,3,2,0.8)";
+  star(m, 300);
+  // Rune blocks in the outer band.
+  for (let i = 0; i < 28; i++) {
+    const a = (i / 28) * Math.PI * 2;
+    m.save();
+    m.rotate(a);
+    m.fillStyle = "rgba(6,3,2,0.8)";
+    m.fillRect(-10, -478, 20, 26);
+    m.fillRect(-3, -470, 6 + (i % 3) * 6, 10);
+    m.restore();
+  }
+  // Glow: only the inner star and the middle ring carry a faint ember line.
+  gl.shadowColor = "#ff6a20";
+  gl.shadowBlur = 16;
+  gl.strokeStyle = "#ff8a3a";
+  gl.lineWidth = 2;
+  star(gl, 300);
+  gl.beginPath();
+  gl.arc(0, 0, 300, 0, Math.PI * 2);
+  gl.stroke();
+  gl.globalAlpha = 0.6;
+  gl.beginPath();
+  gl.arc(0, 0, 120, 0, Math.PI * 2);
+  gl.stroke();
+  const map = new THREE.CanvasTexture(mc);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const glow = new THREE.CanvasTexture(gc);
+  glow.colorSpace = THREE.SRGBColorSpace;
+  for (const t of [map, glow]) t.anisotropy = 8;
+  return { map, glow };
+}
+
+/** Irregular splatter blot (white with alpha; tinted by the material). */
+function stainTexture() {
+  const S = 256;
+  const c = document.createElement("canvas");
+  c.width = c.height = S;
+  const g = c.getContext("2d")!;
+  const blob = (x: number, y: number, rad: number, a: number) => {
+    const grd = g.createRadialGradient(x, y, 0, x, y, rad);
+    grd.addColorStop(0, `rgba(255,255,255,${a})`);
+    grd.addColorStop(0.7, `rgba(255,255,255,${a * 0.6})`);
+    grd.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grd;
+    g.beginPath();
+    g.arc(x, y, rad, 0, Math.PI * 2);
+    g.fill();
+  };
+  blob(128, 128, 80, 0.8);
+  for (let i = 0; i < 26; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = 30 + Math.random() * 80;
+    blob(128 + Math.cos(a) * d, 128 + Math.sin(a) * d, 6 + Math.random() * 26, 0.5 + Math.random() * 0.4);
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+const medalCache = new Map<string, THREE.Texture>();
+/** Medallion face: dark enamel, a coloured inner ring (red for danger, violet for the Abyss), the reward symbol. */
+export function medalTexture(kind: IconKind, ring: string | null) {
+  const key = kind + (ring ?? "");
+  const hit = medalCache.get(key);
+  if (hit) return hit;
+  const S = 256;
+  const c = document.createElement("canvas");
+  c.width = c.height = S;
+  const g = c.getContext("2d")!;
+  const col = ICON_COLOR[kind];
+  const bg = g.createRadialGradient(S / 2, S / 2, 8, S / 2, S / 2, S / 2);
+  bg.addColorStop(0, "#2a1410");
+  bg.addColorStop(0.75, "#120806");
+  bg.addColorStop(1, "#050202");
+  g.fillStyle = bg;
+  g.beginPath();
+  g.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
+  g.fill();
+  g.lineWidth = 7;
+  g.strokeStyle = ring ?? col;
+  g.shadowColor = ring ?? col;
+  g.shadowBlur = 14;
+  g.beginPath();
+  g.arc(S / 2, S / 2, S / 2 - 14, 0, Math.PI * 2);
+  g.stroke();
+  // Notches around the ring.
+  g.lineWidth = 4;
+  for (let i = 0; i < 24; i++) {
+    const an = (i / 24) * Math.PI * 2;
+    g.beginPath();
+    g.moveTo(S / 2 + Math.cos(an) * (S / 2 - 24), S / 2 + Math.sin(an) * (S / 2 - 24));
+    g.lineTo(S / 2 + Math.cos(an) * (S / 2 - 32), S / 2 + Math.sin(an) * (S / 2 - 32));
+    g.stroke();
+  }
+  g.shadowBlur = 0;
+  g.drawImage(iconCanvas(kind), 30, 30, S - 60, S - 60);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  medalCache.set(key, t);
   return t;
 }
 

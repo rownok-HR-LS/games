@@ -7,23 +7,49 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { Audio } from "./audio";
 import { Boss } from "./boss";
-import { BLESSINGS, ELEMENT_COLOR, Loadout, MOVES, RELICS, rewardIcon, rewardLabel, type Element, type Mods, type Reward } from "./boons";
+import {
+  BLESSINGS,
+  bumpRarity,
+  ELEMENT_COLOR,
+  LEVEL_STEP,
+  Loadout,
+  MOVES,
+  RARITY_COLOR,
+  RARITY_MULT,
+  RELICS,
+  rewardIcon,
+  rewardLabel,
+  rollRarity,
+  type DoorPlan,
+  type Element,
+  type Mods,
+  type Rarity,
+  type Reward,
+} from "./boons";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { Creature } from "./creatures";
-import { DEFS, Enemy, Hex, type EnemyKind } from "./enemies";
+import { DEFS, ELITE_COLOR, Enemy, Hex, type EliteMod, type EnemyKind } from "./enemies";
+import { Butcher } from "./miniboss";
+import { itemIcon as shopIcon, itemName, MERCHANT_LINES, pick, Fountain, Shop, type ShopItem } from "./special";
 import { Fx } from "./fx";
+import { LordApparition, LORDS } from "./lords";
 import { Hud } from "./hud";
 import { Input } from "./input";
-import { ELEMENT_RGB, Player } from "./player";
+import { ELEMENT_RGB, MAG, Player } from "./player";
 import { RANKS, SOUL_MUL, StyleMeter } from "./style";
 import { ICON_COLOR, type IconKind } from "./textures";
+import type { EnemyBar, Marker } from "./hud";
+import { doorIcon } from "./boons";
 import type { AttackOpts, AttackResult, Hit, Target } from "./types";
-import { Room } from "./world";
+import { buildMedal, medalTexture, Room } from "./world";
 
-export const ROOMS = 7; // 6 combat rooms + the boss
-export type Card = { id: string; name: string; text: string; icon: IconKind; color: string; tag: string; note?: string };
+/** Chambers per floor: the last is the Warden (boss); the mini-boss waits halfway; the one before the boss is always merchant-or-fountain. */
+export const FLOOR_ROOMS = 12;
+export const MINIBOSS_ROOM = 6;
+const ELEMENTS: Element[] = ["fire", "ice", "lightning", "shadow"];
+export type Card = { id: string; name: string; text: string; icon: IconKind; color: string; tag: string; note?: string; rarity?: string };
 export type UiEvent =
-  | { type: "choose"; title: string; cards: Card[] }
+  | { type: "choose"; title: string; cards: Card[]; lord?: boolean }
   | { type: "dead"; stats: RunStats }
   | { type: "victory"; stats: RunStats }
   | { type: "bossIntro"; name: string; title: string };
@@ -46,10 +72,12 @@ type Hazard =
   | { kind: "fire"; pos: THREE.Vector3; t: number; enemy: boolean; tick: number }
   | { kind: "clone"; pos: THREE.Vector3; t: number }
   | { kind: "wave"; pos: THREE.Vector3; dir: THREE.Vector3; left: number; hit: Set<number>; color: THREE.Color }
-  | { kind: "fountain"; obj: THREE.Object3D; t: number; scale: number };
+  | { kind: "fountain"; obj: THREE.Object3D; t: number; scale: number }
+  | { kind: "blast"; pos: THREE.Vector3; t: number; tel: ReturnType<Fx["telegraph"]> };
 
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
+const v3 = new THREE.Vector3();
 const CAM_DIR = new THREE.Vector3(1, 1.32, 1).normalize();
 
 export class Game {
@@ -69,7 +97,9 @@ export class Game {
   room!: Room;
   readonly player: Player;
   enemies: Enemy[] = [];
-  boss: Boss | null = null;
+  boss: Boss | Butcher | null = null;
+  private shop: Shop | null = null;
+  private fountain: Fountain | null = null;
   private hexes: Hex[] = [];
   private debris: Debris[] = [];
   private hazards: Hazard[] = [];
@@ -78,15 +108,29 @@ export class Game {
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   time = 0;
   hpScale = 1;
+  dmgScale = 1;
+  coins = 0;
+  private shopSeen = false;
+  private pendingRarity = new Map<string, Rarity>();
+  private camFocus = new THREE.Vector3();
   // Flow.
   roomNo = 1;
-  private roomReward: Reward | null = null;
-  private waves: EnemyKind[][] = [];
+  private plan: DoorPlan = { type: "combat", reward: null };
+  private waves: { kind: EnemyKind; elite: EliteMod | null }[][] = [];
   private waveDelay = 0;
   private phase: "fight" | "killcam" | "loot" | "doors" | "fade" | "bossIntro" | "over" = "fight";
   private phaseT = 0;
-  private orb: THREE.Mesh | null = null;
-  private nextDoor: { reward: Reward } | null = null;
+  /** Room reward pickup: a floating medallion showing the reward's symbol. */
+  private orb: THREE.Group | null = null;
+  private orbMedal: THREE.Group | null = null;
+  private orbRing: THREE.Mesh | null = null;
+  private orbColor = new THREE.Color();
+  private orbT = 0;
+  /** The Fallen Lord handing out the current blessing, and what to do once it has risen. */
+  private lord: LordApparition | null = null;
+  private lordCue: (() => void) | null = null;
+  private lordCueT = 0;
+  private nextPlan: DoorPlan | null = null;
   souls = 0;
   kills = 0;
   private runTime = 0;
@@ -155,7 +199,7 @@ export class Game {
     this.resizeObs = new ResizeObserver(() => this.resize());
     this.resizeObs.observe(host);
     this.resize();
-    this.buildRoom(1, null);
+    this.buildRoom(1, { type: "combat", reward: null });
     this.loop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.loop);
   }
@@ -198,19 +242,22 @@ export class Game {
     this.mods = this.loadout.mods();
     this.player.maxHp = 100;
     this.player.hp = 100;
+    this.player.defiance = this.player.defianceMax = 1;
     this.player.wrath = 0;
     this.player.wrathT = 0;
     this.player.model.setWrath(false);
-    this.player.ammo = 12;
+    this.player.ammo = MAG;
     this.player.reloading = false;
     this.player.specialCd = 0;
     this.style.reset();
     this.style.best = 0;
     this.souls = 0;
+    this.coins = 0;
     this.kills = 0;
     this.runTime = 0;
+    this.shopSeen = false;
     this.hud.boons(this.loadout);
-    this.buildRoom(1, null);
+    this.buildRoom(1, { type: "combat", reward: { kind: "blessing", element: ELEMENTS[(Math.random() * 4) | 0] } });
     this.paused = false;
     this.running = true;
     this.audio.unlock();
@@ -235,9 +282,17 @@ export class Game {
     this.hexes = [];
     for (const d of this.debris) d.obj.parent?.remove(d.obj);
     this.debris = [];
+    for (const h of this.hazards) if (h.kind === "blast") this.fx.endTel(h.tel);
     this.hazards = [];
     if (this.orb) this.scene.remove(this.orb);
     this.orb = null;
+    this.removeLord();
+    if (this.shop) this.scene.remove(this.shop.group);
+    if (this.fountain) this.scene.remove(this.fountain.group);
+    this.shop = null;
+    this.fountain = null;
+    this.hud.prompt(null);
+    this.hud.clearFloaters();
     this.fx.clearRoom();
     if (this.room) {
       this.scene.remove(this.room.group);
@@ -246,12 +301,19 @@ export class Game {
     this.tokens = 0;
   }
 
-  private buildRoom(no: number, reward: Reward | null) {
+  private buildRoom(no: number, plan: DoorPlan) {
     this.clearRoom();
     this.roomNo = no;
-    this.roomReward = reward;
-    const isBoss = no === ROOMS;
-    this.room = new Room(no * 31 + Math.floor(Math.random() * 1000), { boss: isBoss, doors: isBoss ? 0 : no === ROOMS - 1 ? 1 : no >= 3 ? 3 : 2 });
+    this.plan = plan;
+    const type = plan.type;
+    const fight = type === "combat" || type === "elite" || type === "abyss";
+    const visit = type === "shop" || type === "fountain";
+    // Deeper = tougher.
+    this.hpScale = type === "boss" ? 1.3 : 1 + 0.07 * (no - 1);
+    this.dmgScale = type === "boss" ? 1.15 : 1 + 0.045 * (no - 1);
+    const doors = type === "boss" ? 0 : no === FLOOR_ROOMS - 1 || no === MINIBOSS_ROOM - 1 ? 1 : no === FLOOR_ROOMS - 2 ? 2 : no >= 3 ? 3 : 2;
+    const traps = fight && no >= 2 ? Math.min(5, 2 + Math.floor(no / 3)) : type === "miniboss" ? 3 : 0;
+    this.room = new Room(no * 31 + Math.floor(Math.random() * 1000), { boss: type === "boss", doors, traps, small: visit });
     this.scene.add(this.room.group);
     const s = Math.max(this.room.hx, this.room.hz) + 3;
     const sc = this.key.shadow.camera;
@@ -267,58 +329,74 @@ export class Game {
     this.focus.copy(this.player.pos);
     this.zoom = this.zoomTarget = 1;
     this.focusOverride = null;
-    this.waves = isBoss ? [] : this.composeWaves(no);
+    this.waves = fight ? this.composeWaves(no, type) : [];
     this.waveDelay = 0.9;
-    this.phase = isBoss ? "bossIntro" : "fight";
+    this.phase = fight ? "fight" : visit ? "doors" : "bossIntro";
     this.phaseT = 0;
-    if (isBoss) {
-      this.boss = new Boss(this, -5, -5);
+    if (type === "boss" || type === "miniboss") {
+      this.boss = type === "boss" ? new Boss(this, -5, -5) : new Butcher(this, -3, -3);
       this.audio.setCue("boss1");
-      this.onUi({ type: "bossIntro", name: "The Chained Cerberus", title: "Warden of the Bone Pits" });
+      this.onUi({ type: "bossIntro", name: this.boss.name, title: this.boss.title });
     } else this.audio.setCue("floor1");
-    this.hud.room(`Bone Pits · ${isBoss ? "Warden" : `Chamber ${no}/${ROOMS - 1}`}`);
+    if (type === "shop") {
+      this.shopSeen = true;
+      this.shop = new Shop(this.shopStock());
+      this.scene.add(this.shop.group);
+      this.merchantSay(pick(MERCHANT_LINES.enter));
+    }
+    if (type === "fountain") {
+      this.fountain = new Fountain();
+      this.scene.add(this.fountain.group);
+    }
+    if (visit) this.openDoors();
+    const names: Record<DoorPlan["type"], string> = { combat: "", elite: " · Elite", abyss: " · Abyss", shop: " · Merchant", fountain: " · Fountain", miniboss: " · The Butcher", boss: " · Warden" };
+    this.hud.room(`Bone Pits · ${type === "boss" ? "Warden" : `Chamber ${no}/${FLOOR_ROOMS - 1}`}${type === "boss" ? "" : names[type]}`);
     this.hud.boss(null, 0);
     this.updateCamera(1);
   }
 
-  private composeWaves(no: number): EnemyKind[][] {
+  private composeWaves(no: number, type: DoorPlan["type"]): { kind: EnemyKind; elite: EliteMod | null }[][] {
     const cost: Record<EnemyKind, number> = { hound: 1.6, imp: 3, mantis: 3, golem: 7 };
     const pool: EnemyKind[] = ["hound", "hound", "hound"];
     if (no >= 2) pool.push("imp", "imp");
     if (no >= 3) pool.push("golem");
     if (no >= 4) pool.push("mantis", "mantis");
-    const n = no >= 4 ? 3 : 2;
-    const budget = 7 + no * 3.2;
-    const waves: EnemyKind[][] = [];
+    const n = type === "abyss" ? 3 : no >= 4 ? 3 : 2;
+    const budget = (9 + no * 3.6) * (type === "elite" ? 1.1 : type === "abyss" ? 1.45 : 1);
+    const mods: EliteMod[] = ["shielded", "enraged", "volatile"];
+    const eliteChance = type === "elite" ? 1 : type === "abyss" ? 0.35 : no >= 4 ? 0.12 : 0;
+    const waves: { kind: EnemyKind; elite: EliteMod | null }[][] = [];
     for (let w = 0; w < n; w++) {
-      let b = budget / n + w;
-      const wave: EnemyKind[] = [];
+      let b = budget / n + w * 1.5;
+      const wave: { kind: EnemyKind; elite: EliteMod | null }[] = [];
       let guard = 0;
       while (b > 1.5 && guard++ < 40) {
         const k = pool[(Math.random() * pool.length) | 0];
-        if (cost[k] > b + 1) continue;
-        if (k === "golem" && wave.includes("golem")) continue;
-        wave.push(k);
-        b -= cost[k];
+        const elite = Math.random() < eliteChance ? mods[(Math.random() * mods.length) | 0] : null;
+        const c = cost[k] * (elite ? 1.8 : 1);
+        if (c > b + 1) continue;
+        if (k === "golem" && wave.some((x) => x.kind === "golem")) continue;
+        wave.push({ kind: k, elite });
+        b -= c;
       }
-      if (no === 3 && w === n - 1 && !wave.includes("golem")) wave.push("golem");
+      if (no === 3 && w === n - 1 && !wave.some((x) => x.kind === "golem")) wave.push({ kind: "golem", elite: null });
       waves.push(wave);
     }
     return waves;
   }
 
-  spawnEnemy(kind: EnemyKind, x: number, z: number) {
+  spawnEnemy(kind: EnemyKind, x: number, z: number, elite: EliteMod | null = null) {
     v1.set(x, 0, z);
     this.room.resolve(v1, 1);
-    const e = new Enemy(this, kind, v1.x, v1.z);
+    const e = new Enemy(this, kind, v1.x, v1.z, elite);
     this.enemies.push(e);
     this.audio.spawn();
     return e;
   }
 
-  private spawnWave(wave: EnemyKind[]) {
+  private spawnWave(wave: { kind: EnemyKind; elite: EliteMod | null }[]) {
     const r = this.room;
-    for (const k of wave) {
+    for (const { kind, elite } of wave) {
       let x = 0;
       let z = 0;
       for (let i = 0; i < 20; i++) {
@@ -326,7 +404,7 @@ export class Game {
         z = (Math.random() * 2 - 1) * (r.hz - 2);
         if (Math.hypot(x - this.player.pos.x, z - this.player.pos.z) > 6) break;
       }
-      this.spawnEnemy(k, x, z);
+      this.spawnEnemy(kind, x, z, elite);
     }
   }
 
@@ -339,12 +417,12 @@ export class Game {
           this.waveDelay -= dt;
           if (this.waveDelay <= 0) {
             this.spawnWave(this.waves.shift()!);
-            this.waveDelay = 1.2;
+            this.waveDelay = 1.0;
           }
         }
         break;
       case "bossIntro":
-        this.focusOverride = this.boss ? v1.copy(this.boss.pos).setY(2) : null;
+        this.focusOverride = this.boss ? this.camFocus.copy(this.boss.pos).setY(2) : null;
         this.zoomTarget = 0.8;
         if (this.phaseT > 3) {
           this.focusOverride = null;
@@ -353,41 +431,56 @@ export class Game {
         }
         break;
       case "killcam":
-        if (this.phaseT > (this.boss ? 2.6 : 1.3)) {
+        if (this.phaseT > (this.boss?.final ? 2.6 : 1.3)) {
           this.zoomTarget = 1;
           this.focusOverride = null;
           this.hud.letterbox(false);
-          if (this.boss) {
+          if (this.boss?.final) {
             this.phase = "over";
             this.phaseT = 0;
           } else this.roomCleared();
         }
         break;
       case "loot":
-        if (this.orb) {
-          this.orb.position.y = 1.2 + Math.sin(this.time * 3) * 0.15;
-          this.orb.rotation.y += real * 2;
-          if (Math.random() < real * 30) this.fx.sparks(this.orb.position, (this.orb.material as THREE.MeshBasicMaterial).color, 1, 1.5);
+        if (this.orb && this.orbMedal && this.orbRing) {
+          this.orbT += real;
+          const pop = Math.min(1, this.orbT / 0.45);
+          const back = 1 + 2.70158 * Math.pow(pop - 1, 3) + 1.70158 * Math.pow(pop - 1, 2);
+          this.orbMedal.scale.setScalar(Math.max(0.01, back * 0.7));
+          this.orbMedal.position.y = 1.7 + Math.sin(this.orbT * 2.4) * 0.12;
+          this.orbMedal.rotation.set(-0.42, Math.PI / 4 + Math.sin(this.orbT * 1.4) * 0.5, 0, "YXZ");
+          this.orbRing.rotation.y += real * 0.8;
+          (this.orbRing.material as THREE.MeshBasicMaterial).opacity = 0.45 + Math.sin(this.orbT * 3) * 0.12;
+          if (Math.random() < real * 6) this.fx.emit({ x: this.orb.position.x + (Math.random() - 0.5) * 1.6, y: 0.2, z: this.orb.position.z + (Math.random() - 0.5) * 1.6, vy: 0.8 + Math.random() * 0.8, color: this.orbColor, size: 0.05, life: 1.2, additive: true, drag: 0.4 });
           if (Math.hypot(this.player.pos.x - this.orb.position.x, this.player.pos.z - this.orb.position.z) < 1.3) this.collectOrb();
         }
         break;
       case "doors":
+        this.updateInteract();
         for (const d of this.room.doors) {
-          if (!d.open || !d.reward) continue;
+          if (!d.open || !d.plan) continue;
           if (Math.hypot(this.player.pos.x - d.pos.x, this.player.pos.z - d.pos.z) < 1.9) {
             this.phase = "fade";
             this.phaseT = 0;
-            this.nextDoor = { reward: d.reward };
+            this.nextPlan = d.plan;
             this.hud.fade(true);
+            this.hud.prompt(null);
             this.audio.door();
+            if (this.shop) this.merchantSay(pick(MERCHANT_LINES.leave));
           }
         }
         break;
       case "fade":
-        if (this.phaseT > 0.5 && this.nextDoor) {
-          const r = this.nextDoor.reward;
-          this.nextDoor = null;
-          this.buildRoom(this.roomNo + 1, r.kind === "boss" ? null : r);
+        if (this.phaseT > 0.5 && this.nextPlan) {
+          const plan = this.nextPlan;
+          this.nextPlan = null;
+          if (plan.type === "abyss") {
+            // The Abyss takes its toll up front.
+            const cost = Math.round(this.player.maxHp * 0.2);
+            this.player.hp = Math.max(1, this.player.hp - cost);
+            this.hud.toast(`THE ABYSS TAKES ${cost} HEALTH`, "#c06bff");
+          }
+          this.buildRoom(this.roomNo + 1, plan);
           this.hud.fade(false);
         }
         break;
@@ -405,51 +498,67 @@ export class Game {
     this.phase = "loot";
     this.phaseT = 0;
     this.style.add("clear", 40);
-    const r = this.roomReward;
+    if (this.plan.type === "elite") this.addCoins(35, new THREE.Vector3(0, 0, 0));
+    if (this.boss && !this.boss.final) this.boss = null;
+    const r = this.plan.reward;
     if (!r) return this.openDoors();
     const kind = rewardIcon(r);
     const col = new THREE.Color(ICON_COLOR[kind]).multiplyScalar(2.5);
-    this.orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.45, 0), new THREE.MeshBasicMaterial({ color: col }));
-    this.orb.position.set(0, 1.2, 0);
+    this.orbColor.set(ICON_COLOR[kind]).multiplyScalar(1.4);
+    this.orb = new THREE.Group();
+    const { group: medal, faces, rim } = buildMedal();
+    const tex = medalTexture(kind, this.plan.type === "elite" ? "#ff3a2a" : null);
+    for (const m of faces) m.map = tex;
+    rim.emissive.set(ICON_COLOR[kind]).multiplyScalar(0.12);
+    medal.scale.setScalar(0.01);
+    this.orb.add(medal);
+    this.orbMedal = medal;
+    this.orbRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.85, 1.0, 48).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(ICON_COLOR[kind]), transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    this.orbRing.position.y = 0.04;
+    this.orb.add(this.orbRing);
+    const light = new THREE.PointLight(new THREE.Color(ICON_COLOR[kind]), 2.5, 5, 1.8);
+    light.position.set(0, 1.8, 1.2);
+    this.orb.add(light);
+    this.orbT = 0;
     this.scene.add(this.orb);
-    this.fx.ring(this.orb.position.clone().setY(0), 0.2, 2.5, col, 0.8);
+    this.fx.ring(new THREE.Vector3(0, 0.05, 0), 0.2, 2.2, col.multiplyScalar(0.5), 0.6);
     this.hud.toast(`${rewardLabel(r)} appears`, ICON_COLOR[kind]);
   }
 
   private collectOrb() {
-    const r = this.roomReward!;
+    const r = this.plan.reward!;
     if (this.orb) {
-      this.fx.flash(this.orb.position, (this.orb.material as THREE.MeshBasicMaterial).color, 3, 0.3);
+      this.fx.flash(this.orb.position.clone().setY(1.7), this.orbColor, 2, 0.25);
+      this.fx.sparks(this.orb.position.clone().setY(1.7), this.orbColor, 14, 5);
       this.scene.remove(this.orb);
       this.orb = null;
+      this.orbMedal = null;
+      this.orbRing = null;
     }
     this.audio.pickup();
+    this.grant(r, this.plan.type === "elite");
+  }
+
+  /** Hand out a reward (from a room or the shop). */
+  private grant(r: Reward, bonus = false) {
     switch (r.kind) {
-      case "health": {
-        const heal = 35 * this.mods.heal;
-        this.player.hp = Math.min(this.player.maxHp, this.player.hp + heal);
-        this.hud.toast(heal > 0 ? `+${Math.round(heal)} health` : "The Pact forbids healing", "#ff4a5a");
-        return this.openDoors();
+      case "health":
+        this.heal(0.3);
+        return this.afterChoice();
+      case "coins":
+        this.addCoins(r.amount, this.player.pos);
+        return this.afterChoice();
+      case "blessing": {
+        let min = r.minRarity ?? "common";
+        if (bonus) min = bumpRarity(min === "common" ? "common" : min);
+        const rarity = bonus ? (min === "common" ? "rare" : min) : min;
+        return this.summonLord(r.element, () => this.offerBlessings(r.element, rarity));
       }
-      case "souls": {
-        const s = Math.round(45 * SOUL_MUL[this.style.rank]);
-        this.souls += s;
-        this.hud.toast(`+${s} demon souls`, "#9ef0ff");
-        return this.openDoors();
-      }
-      case "blessing":
-        return this.offer(
-          `${r.element[0].toUpperCase()}${r.element.slice(1)} Blessing`,
-          this.loadout.offerBlessings(r.element).map((b) => ({
-            id: b.id,
-            name: b.name,
-            text: b.text,
-            icon: b.element,
-            color: ELEMENT_COLOR[b.element],
-            tag: `${b.slot === "aux" ? "Passive" : b.slot[0].toUpperCase() + b.slot.slice(1)} blessing`,
-            note: this.loadout.slots[b.slot] ? `Replaces ${this.loadout.slots[b.slot]!.name}` : undefined,
-          })),
-        );
+      case "ember":
+        return this.offerLevelUp();
       case "relic":
         return this.offer(
           "Cursed Relic",
@@ -460,27 +569,69 @@ export class Game {
           "New Move",
           this.loadout.offerMoves().map((x) => ({ id: x.id, name: x.name, text: x.text, icon: "move" as IconKind, color: "#ffffff", tag: "Move" })),
         );
-      case "boss":
-        return this.openDoors();
     }
+  }
+
+  private offerBlessings(el: Element, min: Rarity) {
+    this.pendingRarity.clear();
+    const cards = this.loadout.offerBlessings(el).map((b) => {
+      const rarity = rollRarity(min);
+      this.pendingRarity.set(b.id, rarity);
+      const owned = this.loadout.slots[b.slot];
+      return {
+        id: b.id,
+        name: b.name,
+        text: b.text,
+        icon: b.element as IconKind,
+        color: ELEMENT_COLOR[b.element],
+        tag: `${rarity[0].toUpperCase()}${rarity.slice(1)} · ${b.slot === "aux" ? "Passive" : b.slot[0].toUpperCase() + b.slot.slice(1)} · ${Math.round(RARITY_MULT[rarity] * 100)}% power`,
+        rarity: RARITY_COLOR[rarity],
+        note: owned ? `Replaces ${owned.name}` : undefined,
+      };
+    });
+    this.offer(`Blessing of ${LORDS[el].name}, ${LORDS[el].title}`, cards);
+  }
+
+  private offerLevelUp() {
+    const owned = this.loadout.owned();
+    if (!owned.length) return this.offerBlessings(ELEMENTS[(Math.random() * 4) | 0], "rare");
+    this.offer(
+      "Ember Heart",
+      owned.map((b) => ({
+        id: `lvl:${b.id}`,
+        name: `${b.name}  Lv ${b.level} → ${b.level + 1}`,
+        text: b.text,
+        icon: b.element as IconKind,
+        color: ELEMENT_COLOR[b.element],
+        tag: `Level up · ${Math.round(RARITY_MULT[b.rarity] * (1 + LEVEL_STEP * (b.level - 1)) * 100)}% → ${Math.round(RARITY_MULT[b.rarity] * (1 + LEVEL_STEP * b.level) * 100)}% power`,
+        rarity: RARITY_COLOR[b.rarity],
+      })),
+    );
   }
 
   private offer(title: string, cards: Card[]) {
     if (!cards.length) {
-      this.souls += 30;
-      this.hud.toast("+30 demon souls", "#9ef0ff");
-      return this.openDoors();
+      this.lord?.dismiss();
+      this.releaseLordCam();
+      this.addCoins(40, this.player.pos);
+      return this.afterChoice();
     }
     this.setPaused(true);
-    this.onUi({ type: "choose", title, cards });
+    this.onUi({ type: "choose", title, cards, lord: !!this.lord });
   }
 
   /** Called by the UI when a card is picked. */
   choose(id: string) {
+    if (id.startsWith("lvl:")) this.loadout.levelUp(id.slice(4));
     const b = BLESSINGS.find((x) => x.id === id);
     const rl = RELICS.find((x) => x.id === id);
     const mv = MOVES.find((x) => x.id === id);
-    if (b) this.loadout.slots[b.slot] = b;
+    if (b) this.loadout.take(b, this.pendingRarity.get(id) ?? "common");
+    if (this.lord && b) {
+      this.lord.dismiss();
+      this.releaseLordCam();
+      this.hud.say(this.lord.name, pick(LORDS[this.lord.element].part));
+    }
     if (rl) this.loadout.relics.push(rl);
     if (mv) this.loadout.moves.add(mv.id);
     const oldMax = this.player.maxHp;
@@ -490,7 +641,136 @@ export class Game {
     this.hud.boons(this.loadout);
     this.audio.pickup();
     this.setPaused(false);
-    this.openDoors();
+    this.afterChoice();
+  }
+
+  /** A Fallen Lord rises in front of the hero, speaks, then `then` runs (opens the blessing cards). */
+  private summonLord(el: Element, then: () => void) {
+    this.removeLord();
+    const p = this.player.pos;
+    const at = new THREE.Vector3(p.x * 0.6, 0, Math.max(-9, p.z - 3.4));
+    this.lord = new LordApparition(el, at, p);
+    this.scene.add(this.lord.root);
+    this.focusOverride = this.camFocus.set(CAM_DIR.x, 0, CAM_DIR.z).normalize().multiplyScalar(0.6).add(at);
+    this.zoomTarget = 0.78;
+    const col = new THREE.Color(ELEMENT_COLOR[el]).multiplyScalar(2.2);
+    this.fx.ring(at.clone().setY(0.05), 0.3, 3.2, col, 0.7);
+    this.fx.flash(at.clone().setY(1.5), col, 4, 0.35);
+    this.hud.say(this.lord.name, pick(LORDS[el].greet));
+    this.lordCue = then;
+    this.lordCueT = 1.15;
+  }
+
+  private updateLord(real: number) {
+    if (!this.lord) return;
+    this.lord.update(real, this.fx);
+    if (this.lordCue && (this.lordCueT -= real) <= 0) {
+      const cue = this.lordCue;
+      this.lordCue = null;
+      cue();
+    }
+    if (this.lord?.done) this.removeLord();
+  }
+
+  private releaseLordCam() {
+    if (this.focusOverride === this.camFocus && this.lord) {
+      this.focusOverride = null;
+      this.zoomTarget = 1;
+    }
+  }
+
+  private removeLord() {
+    this.releaseLordCam();
+    if (this.lord) {
+      this.scene.remove(this.lord.root);
+      this.lord.dispose();
+    }
+    this.lord = null;
+    this.lordCue = null;
+  }
+
+  private afterChoice() {
+    if (this.phase === "loot") this.openDoors();
+  }
+
+  private heal(frac: number) {
+    const amt = Math.round(this.player.maxHp * frac * this.mods.heal);
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + amt);
+    this.hud.toast(amt > 0 ? `+${amt} health` : "The Pact forbids healing", "#ff4a5a");
+    if (amt > 0) this.fx.ring(this.player.pos, 0.3, 2, new THREE.Color(2.4, 0.2, 0.3), 0.5);
+  }
+
+  addCoins(n: number, at: THREE.Vector3) {
+    if (n <= 0) return;
+    this.coins += n;
+    this.audio.coin();
+    for (let i = 0; i < Math.min(12, 2 + n / 3); i++)
+      this.fx.emit({ x: at.x, y: 0.8, z: at.z, vx: (Math.random() - 0.5) * 4, vy: 3 + Math.random() * 3, vz: (Math.random() - 0.5) * 4, color: new THREE.Color(2.6, 2, 0.5), size: 0.12, life: 0.7, gravity: 14, bounce: true, additive: true });
+  }
+
+  private merchantSay(line: string) {
+    this.shop?.talk();
+    this.hud.say("The Bone Merchant", line);
+  }
+
+  private shopStock(): ShopItem[] {
+    const el = ELEMENTS[(Math.random() * 4) | 0];
+    const items: ShopItem[] = [{ kind: "vial", price: 70 }, { kind: "blessing", element: el, price: 140 }];
+    items.push(this.loadout.owned().length ? { kind: "ember", price: 110 } : { kind: "relic", price: 120 });
+    if (this.player.defiance < this.player.defianceMax) items.push({ kind: "defiance", price: 200 });
+    else items.push(Math.random() < 0.5 ? { kind: "move", price: 130 } : { kind: "relic", price: 120 });
+    return items;
+  }
+
+  private updateInteract() {
+    const p = this.player.pos;
+    let prompt: string | null = null;
+    let act: (() => void) | null = null;
+    if (this.shop) {
+      this.shop.items.forEach((it, i) => {
+        if (it.sold || Math.hypot(p.x - it.pos.x, p.z - it.pos.z) > 1.7) return;
+        prompt = `${itemName(it.item)} · ${it.item.price} coins`;
+        act = () => this.buy(i);
+      });
+    }
+    if (this.fountain && !this.fountain.used && Math.hypot(p.x - this.fountain.pos.x, p.z - this.fountain.pos.z) < 3) {
+      prompt = "Drink from the Blood Fountain (heal 40%)";
+      act = () => {
+        this.fountain!.use();
+        this.audio.fountain();
+        this.heal(0.4);
+      };
+    }
+    this.hud.prompt(prompt);
+    if (act && this.input.pressed.has("interact")) (act as () => void)();
+  }
+
+  private buy(i: number) {
+    const it = this.shop!.items[i];
+    if (this.coins < it.item.price) {
+      this.audio.deny();
+      return this.merchantSay(pick(MERCHANT_LINES.poor));
+    }
+    this.coins -= it.item.price;
+    this.shop!.sell(i);
+    this.audio.buy();
+    this.merchantSay(pick(MERCHANT_LINES.buy));
+    const item = it.item;
+    switch (item.kind) {
+      case "vial":
+        return this.heal(0.3);
+      case "defiance":
+        this.player.defiance = Math.min(this.player.defianceMax, this.player.defiance + 1);
+        return this.hud.toast("DEATH DEFIANCE RESTORED", "#ffd84a");
+      case "blessing":
+        return this.grant({ kind: "blessing", element: item.element });
+      case "ember":
+        return this.grant({ kind: "ember" });
+      case "relic":
+        return this.grant({ kind: "relic" });
+      case "move":
+        return this.grant({ kind: "move" });
+    }
   }
 
   private openDoors() {
@@ -499,35 +779,56 @@ export class Game {
     const doors = this.room.doors;
     if (!doors.length) return;
     this.audio.door();
-    if (this.roomNo === ROOMS - 1) {
-      this.room.openDoor(doors[0], { kind: "boss" });
+    const next = this.roomNo + 1;
+    if (next === FLOOR_ROOMS) return this.room.openDoor(doors[0], { type: "boss", reward: null });
+    if (next === MINIBOSS_ROOM) return this.room.openDoor(doors[0], { type: "miniboss", reward: { kind: "move" } });
+    if (next === FLOOR_ROOMS - 1) {
+      this.room.openDoor(doors[0], { type: "shop", reward: null });
+      if (doors[1]) this.room.openDoor(doors[1], { type: "fountain", reward: null });
       return;
     }
     const used = new Set<string>();
-    const elements: Element[] = ["fire", "ice", "lightning", "shadow"];
+    let abyss = false;
+    let shop = false;
     for (const d of doors) {
-      let r: Reward = { kind: "souls" };
-      for (let i = 0; i < 20; i++) {
-        const x = Math.random();
-        r =
-          x < 0.46
-            ? { kind: "blessing", element: elements[(Math.random() * 4) | 0] }
-            : x < 0.6
-              ? { kind: "relic" }
-              : x < 0.74
-                ? { kind: "move" }
-                : x < 0.87
-                  ? { kind: "health" }
-                  : { kind: "souls" };
-        if (r.kind === "relic" && this.loadout.relics.length >= RELICS.length) continue;
-        if (r.kind === "move" && this.loadout.moves.size >= MOVES.length) continue;
-        const key = r.kind === "blessing" ? r.element : r.kind;
+      let plan: DoorPlan = { type: "combat", reward: { kind: "coins", amount: 50 } };
+      for (let i = 0; i < 25; i++) {
+        const t = Math.random();
+        let type: DoorPlan["type"] = "combat";
+        if (next >= 3 && t < 0.2) type = "elite";
+        else if (next >= 4 && t < 0.3 && !abyss && this.player.hp > this.player.maxHp * 0.3) type = "abyss";
+        else if (next >= 3 && next <= 9 && t < 0.4 && !shop && !this.shopSeen) type = "shop";
+        if (type === "shop") {
+          plan = { type, reward: null };
+          shop = true;
+          break;
+        }
+        const reward = this.rollReward(type);
+        const key = reward.kind === "blessing" ? reward.element : reward.kind;
         if (used.has(key)) continue;
         used.add(key);
+        if (type === "abyss") abyss = true;
+        plan = { type, reward };
         break;
       }
-      this.room.openDoor(d, r);
+      this.room.openDoor(d, plan);
     }
+  }
+
+  private rollReward(type: DoorPlan["type"]): Reward {
+    const el = ELEMENTS[(Math.random() * 4) | 0];
+    if (type === "abyss") return Math.random() < 0.7 ? { kind: "blessing", element: el, minRarity: "epic" } : { kind: "relic" };
+    const owned = this.loadout.owned().length > 0;
+    for (let i = 0; i < 10; i++) {
+      const x = Math.random();
+      if (x < 0.44) return { kind: "blessing", element: el, minRarity: type === "elite" ? "rare" : "common" };
+      if (x < 0.58 && owned) return { kind: "ember" };
+      if (x < 0.74) return { kind: "coins", amount: 45 + Math.round(Math.random() * 30) };
+      if (x < 0.83 && this.loadout.relics.length < RELICS.length) return { kind: "relic" };
+      if (x < 0.92 && this.loadout.moves.size < MOVES.length) return { kind: "move" };
+      if (x >= 0.96) return { kind: "health" };
+    }
+    return { kind: "coins", amount: 60 };
   }
 
   // ── Combat services ─────────────────────────────────────────────────────────────────
@@ -539,7 +840,7 @@ export class Game {
   }
 
   takeToken() {
-    if (this.tokens >= 3) return false;
+    if (this.tokens >= 5) return false;
     this.tokens++;
     return true;
   }
@@ -554,24 +855,34 @@ export class Game {
     let dmg = h.dmg;
     if (t.frozen() && (h.kind === "blade" || h.kind === "special")) dmg *= 1.5;
     if (el && !h.proc && (h.kind === "blade" || h.kind === "special" || h.kind === "execute")) {
-      if (el === "fire") t.ignite(8, 3);
-      if (el === "ice") t.chill(1);
-      if (el === "lightning") this.chainLightning(t, 2, 9);
+      const pw = this.player.inWrath && el === "fire" ? 1 : Math.max(1, this.loadout.power(`${el}_blade`));
+      if (el === "fire") t.ignite(8 * pw, 3);
+      if (el === "ice") t.chill(pw >= 1.8 ? 2 : 1);
+      if (el === "lightning") this.chainLightning(t, pw >= 1.4 ? 3 : 2, 9 * pw);
     }
     const at = h.at ?? v1.set(t.pos.x, t.chest + t.air, t.pos.z).clone();
+    const shieldOf = () => (t as { shield?: number }).shield ?? 0;
+    const hp0 = t.hp;
+    const sh0 = shieldOf();
     t.takeHit({ ...h, dmg });
+    const dealt = Math.max(0, hp0 - Math.max(0, t.hp)) + Math.max(0, sh0 - shieldOf());
+    if (dealt >= 0.5) {
+      const style = sh0 > shieldOf() && hp0 === t.hp ? "shield" : h.crit ? "crit" : h.kind === "dot" || h.kind === "element" ? "dot" : h.kind === "gun" ? "gun" : h.heavy || h.kind === "execute" ? "heavy" : "";
+      const col = style === "dot" && el ? `#${ELEMENT_RGB[el].clone().multiplyScalar(0.5).getHexString()}` : undefined;
+      this.hud.popNumber(v2.set(t.pos.x, t.chest * 1.4 + t.air + 0.4, t.pos.z), dealt, style, col);
+    }
     // Effects.
     if (h.kind !== "dot") {
       const amount = Math.min(3, 0.5 + dmg / 14);
       if (h.kind !== "element") this.fx.bleed(at, h.dir.x, h.dir.z, h.kind === "gun" ? 0.4 : amount);
       if (h.kind === "blade" || h.kind === "special" || h.kind === "execute" || h.kind === "splitter") {
-        this.fx.flash(at, new THREE.Color(1.4, 1.3, 1.2), h.heavy ? 0.7 : 0.45, 0.06);
+        this.fx.flash(at, new THREE.Color(0.8, 0.75, 0.7), h.heavy ? 0.45 : 0.28, 0.05);
         this.audio.cut(!!h.heavy);
         this.hitstop(h.heavy ? 0.075 : 0.04);
         this.shake(h.heavy ? 0.22 : 0.09);
       } else if (h.kind === "gun") this.audio.bulletHit();
       if (h.crit) this.fx.sparks(at, ELEMENT_RGB.shadow, 10, 6);
-      if (el && h.kind !== "gun") this.fx.sparks(at, ELEMENT_RGB[el], 5, 5);
+      if (el && h.kind !== "gun") this.fx.sparks(at, ELEMENT_RGB[el].clone().multiplyScalar(0.6), 3, 4);
     }
     // Style.
     const pts: Partial<Record<Hit["kind"], number>> = { blade: 14, special: 10, execute: 60, gun: 4, reflect: 50, splitter: 25, dash: 18, element: 3, wrath: 12 };
@@ -582,7 +893,7 @@ export class Game {
       move = "juggle";
     }
     if (p) this.style.add(move, p);
-    if (!this.player.inWrath && h.kind !== "dot") this.player.wrath = Math.min(100, this.player.wrath + dmg * 0.22 * this.mods.wrathGain * (1 + this.style.rank * 0.12));
+    if (!this.player.inWrath && h.kind !== "dot") this.player.wrath = Math.min(100, this.player.wrath + dmg * 0.14 * this.mods.wrathGain * (1 + this.style.rank * 0.12));
   }
 
   private chainLightning(from: Target, n: number, dmg: number) {
@@ -614,7 +925,7 @@ export class Game {
     const t = ts[(Math.random() * ts.length) | 0];
     this.fx.lightning(v1.set(t.pos.x + 1, 12, t.pos.z + 1).clone(), v2.set(t.pos.x, t.chest, t.pos.z).clone(), ELEMENT_RGB.lightning);
     this.audio.zap();
-    this.damage(t, { dmg: 14 * this.mods.dmg, dir: new THREE.Vector3(), kind: "element", move: "heaven", element: "lightning", proc: true });
+    this.damage(t, { dmg: 14 * Math.max(1, this.loadout.power("lightning_aux")) * this.mods.dmg, dir: new THREE.Vector3(), kind: "element", move: "heaven", element: "lightning", proc: true });
   }
 
   fireBullet(origin: THREE.Vector3, dir: THREE.Vector3, o: { dmg: number; pierce: boolean; lightning: boolean; perfect: boolean; quiet?: boolean }) {
@@ -646,7 +957,7 @@ export class Game {
         this.fx.fire(at, 4, 0.5);
         for (const u of this.targets())
           if (u !== t && u.pos.distanceTo(t.pos) < 1.8)
-            this.damage(u, { dmg: 7 * this.mods.dmg, dir, kind: "element", move: "hellfire", element: "fire", proc: true });
+            this.damage(u, { dmg: 7 * this.loadout.power("fire_guns") * this.mods.dmg, dir, kind: "element", move: "hellfire", element: "fire", proc: true });
       }
     }
     if (!use.length && !o.quiet) this.fx.sparks(end, new THREE.Color(2, 1.5, 0.8), 3, 3);
@@ -673,11 +984,11 @@ export class Game {
   dashThrough(t: Target, dir: THREE.Vector3) {
     const l = this.loadout;
     let hit = false;
-    if (l.has("ice_dash")) t.freeze(1.5);
+    if (l.has("ice_dash")) t.freeze(1.5 * l.power("ice_dash"));
     if (l.has("lightning_dash")) {
       this.fx.lightning(v1.set(this.player.pos.x, 1, this.player.pos.z).clone(), v2.set(t.pos.x, t.chest, t.pos.z).clone(), ELEMENT_RGB.lightning);
       this.audio.zap();
-      this.damage(t, { dmg: 14 * this.mods.dmg, dir, kind: "element", move: "static", element: "lightning", proc: true });
+      this.damage(t, { dmg: 14 * l.power("lightning_dash") * this.mods.dmg, dir, kind: "element", move: "static", element: "lightning", proc: true });
       hit = true;
     }
     if (l.moves.has("phantom")) {
@@ -717,19 +1028,37 @@ export class Game {
     // Last kill of the room (or the boss) → kill-cam.
     const remaining = this.enemies.some((e) => e.alive) || this.waves.length > 0;
     if (t.isBoss || (!remaining && !this.boss && this.phase === "fight")) {
+      const final = t.isBoss && !!this.boss?.final;
       this.phase = "killcam";
       this.phaseT = 0;
       for (const e of this.enemies) if (e.alive) e.takeHit({ dmg: 9999, dir: new THREE.Vector3(0, 0, 1), kind: "gun", move: "x" });
-      this.slowmo(0.12, t.isBoss ? 2.6 : 1.3);
-      this.zoomTarget = t.isBoss ? 0.6 : 0.55;
+      this.slowmo(0.12, final ? 2.6 : 1.3);
+      this.zoomTarget = final ? 0.6 : 0.55;
       this.focusOverride = at.clone();
       this.hud.letterbox(true);
       this.hud.inkFlash();
       this.audio.killcam();
-      if (t.isBoss) {
-        this.hud.toast("CERBERUS FALLS", "#ffd84a");
-        this.souls += 0;
-      }
+      if (t.isBoss) this.hud.toast(final ? "CERBERUS FALLS" : "THE BUTCHER FALLS", "#ffd84a");
+    }
+  }
+
+/** A volatile elite's death: a marked circle, then an explosion that hurts everything inside. */
+  volatileBlast(pos: THREE.Vector3) {
+    const tel = this.fx.telegraph("circle", pos, 0, 2.8, 0, 0.9, new THREE.Color(2.2, 0.8, 0.1));
+    this.hazards.push({ kind: "blast", pos: pos.clone(), t: 0.9, tel });
+  }
+
+  onDefiance(at: THREE.Vector3) {
+    this.audio.defiance();
+    this.slowmo(0.2, 1.1);
+    this.hud.toast("DEATH DEFIED", "#ffd84a");
+    this.hud.wrathFlash();
+    this.fx.ring(at, 0.4, 7, new THREE.Color(3, 2.4, 0.8), 0.7);
+    this.fx.sparks(v1.set(at.x, 1.2, at.z), new THREE.Color(3, 2.4, 0.8), 40, 10);
+    this.shake(0.5);
+    for (const t of this.targets()) {
+      const d = t.pos.distanceTo(at);
+      if (d < 6) this.damage(t, { dmg: 20, dir: v2.subVectors(t.pos, at).setY(0).normalize().clone(), kind: "wrath", move: "defiance", knock: 14, heavy: true });
     }
   }
 
@@ -1061,7 +1390,7 @@ export class Game {
             for (const t of this.targets())
               if (t.pos.distanceTo(h.pos) < 2.6) {
                 const dir = v2.subVectors(t.pos, h.pos).setY(0).normalize().clone();
-                this.damage(t, { dmg: 22 * this.mods.dmg, dir, kind: "element", move: "inkclone", element: "shadow", proc: true, knock: 6 });
+                this.damage(t, { dmg: 22 * Math.max(1, this.loadout.power("shadow_dash")) * this.mods.dmg, dir, kind: "element", move: "inkclone", element: "shadow", proc: true, knock: 6 });
               }
           }
           break;
@@ -1082,6 +1411,22 @@ export class Game {
           }
           break;
         }
+        case "blast":
+          h.t -= dt;
+          if (Math.random() < dt * 30) this.fx.embers(h.pos, 1, 1.5);
+          if (h.t <= 0) {
+            this.fx.endTel(h.tel);
+            this.fx.ring(h.pos, 0.3, 3, new THREE.Color(3, 1.1, 0.2), 0.4);
+            this.fx.fire(h.pos, 20, 2.4, 1.6);
+            this.fx.sparks(v1.set(h.pos.x, 0.8, h.pos.z), new THREE.Color(3, 1.2, 0.3), 24, 8);
+            this.audio.boom(1.2);
+            this.shake(0.3);
+            const p = this.player.pos;
+            if (Math.hypot(p.x - h.pos.x, p.z - h.pos.z) < 2.8) this.player.receive(null, h.pos, 20, { parryable: false, kind: "aoe", knock: 9 });
+            for (const t of this.targets())
+              if (t.pos.distanceTo(h.pos) < 2.8 + t.radius) this.damage(t, { dmg: 40, dir: v2.subVectors(t.pos, h.pos).setY(0).normalize().clone(), kind: "element", move: "volatile", knock: 8, element: "fire", proc: true });
+          }
+          break;
         case "fountain": {
           h.t -= dt;
           h.obj.getWorldPosition(v1);
@@ -1118,11 +1463,19 @@ export class Game {
     const target = this.focusOverride ?? v1.copy(p).lerp(this.mouseGround, this.input.touch ? 0 : 0.12);
     // Boss fights: keep the boss in frame too.
     if (!this.focusOverride && this.boss?.alive) target.lerp(v2.set(this.boss.pos.x, 0, this.boss.pos.z), 0.35);
+    if (!this.focusOverride && this.phase === "doors") {
+      const open = this.room.doors.filter((d) => d.open);
+      if (open.length) {
+        v2.set(0, 0, 0);
+        for (const d of open) v2.add(d.pos).addScaledVector(d.normal, 3);
+        target.lerp(v2.divideScalar(open.length), this.shop ? 0.25 : 0.55);
+      }
+    }
     this.focus.lerp(target, 1 - Math.exp(-real * (this.focusOverride ? 4 : 7)));
     this.zoom += (this.zoomTarget - this.zoom) * (1 - Math.exp(-real * 5));
     const aspect = this.camera.aspect;
-    const base = (this.roomNo === ROOMS ? 23 : 16.5) * (aspect < 1 ? 1.55 : aspect < 1.3 ? 1.2 : 1);
-    const dist = base * this.zoom;
+    const base = (this.boss?.final ? 23 : this.boss ? 20 : 16.5) * (aspect < 1 ? 1.55 : aspect < 1.3 ? 1.2 : 1);
+    const dist = base * this.zoom * (this.phase === "doors" && !this.shop ? 1.22 : 1);
     this.camPos.copy(this.focus).addScaledVector(CAM_DIR, dist);
     this.trauma = Math.max(0, this.trauma - real * 1.6);
     const s = this.trauma * this.trauma * 0.7;
@@ -1132,6 +1485,92 @@ export class Game {
       this.camPos.z + (Math.random() - 0.5) * s,
     );
     this.camera.lookAt(this.focus.x, this.focus.y + 0.6, this.focus.z);
+  }
+
+/** Health bars above living enemies (bosses use the big bar), plus the floating damage numbers. */
+  private updateEnemyBars(real: number) {
+    const w = this.host.clientWidth;
+    const h = this.host.clientHeight;
+    const v = v3;
+    const project = (p: THREE.Vector3, out: { x: number; y: number }) => {
+      v.copy(p).project(this.camera);
+      if (v.z > 1) return false;
+      out.x = (v.x * 0.5 + 0.5) * w;
+      out.y = (-v.y * 0.5 + 0.5) * h;
+      return out.x > -40 && out.x < w + 40 && out.y > -40 && out.y < h + 40;
+    };
+    const bars: EnemyBar[] = [];
+    const o = { x: 0, y: 0 };
+    for (const e of this.enemies) {
+      if (!e.alive || e.state === "spawn") continue;
+      const top = e.c.root.position.y + e.c.size.y * e.c.root.scale.y + 0.35;
+      if (!project(v.set(e.pos.x, top, e.pos.z), o)) continue;
+      bars.push({
+        id: e.id,
+        x: o.x,
+        y: o.y,
+        hp: Math.max(0, e.hp / e.maxHp),
+        shield: e.shield > 0 ? e.shield / (e.maxHp * 0.6) : 0,
+        wide: e.kind === "golem" || !!e.elite,
+        elite: e.elite ? `#${ELITE_COLOR[e.elite].clone().multiplyScalar(0.45).getHexString()}` : null,
+      });
+    }
+    this.hud.enemyBars(bars, real);
+    this.hud.updateNumbers(real, project);
+  }
+
+/** Door rewards and shop prices as screen labels; doors off-screen get pinned to the edge with an arrow. */
+  private updateMarkers() {
+    const list: Marker[] = [];
+    const w = this.host.clientWidth;
+    const h = this.host.clientHeight;
+    const pad = 70;
+    const v = new THREE.Vector3();
+    const place = (world: THREE.Vector3, m: Omit<Marker, "x" | "y" | "arrow">, pin: boolean, offOnly = false) => {
+      v.copy(world).project(this.camera);
+      let x = (v.x * 0.5 + 0.5) * w;
+      let y = (-v.y * 0.5 + 0.5) * h;
+      const behind = v.z > 1;
+      if (behind) {
+        x = w - x;
+        y = h - y;
+      }
+      const off = behind || x < pad || x > w - pad || y < pad + 40 || y > h - pad;
+      if (off && !pin) return;
+      if (!off && offOnly) return;
+      let arrow: number | null = null;
+      if (off) {
+        const cx = w / 2;
+        const cy = h / 2;
+        arrow = Math.atan2(y - cy, x - cx);
+        x = Math.min(w - pad - 40, Math.max(pad + 40, x));
+        y = Math.min(h - pad, Math.max(pad + 60, y));
+      }
+      list.push({ ...m, x, y, arrow });
+    };
+    if (this.phase === "doors" || this.phase === "loot") {
+      for (const d of this.room.doors) {
+        if (!d.open || !d.plan) continue;
+        const icon = doorIcon(d.plan);
+        const r = d.plan.reward;
+        const t = d.plan.type;
+        const title =
+          t === "shop" ? "Bone Merchant" : t === "fountain" ? "Blood Fountain" : t === "boss" ? "The Warden" : t === "miniboss" ? "The Pit Butcher" : r ? rewardLabel(r) : "Chamber";
+        const sub = t === "elite" ? "Elite chamber" : t === "abyss" ? "Abyss · costs 20% HP" : t === "miniboss" ? "Mini-boss" : t === "boss" ? "Boss" : t === "combat" ? "" : "";
+        const color = t === "elite" ? "#ff4a3a" : t === "abyss" ? "#c06bff" : ICON_COLOR[icon];
+        place(v.copy(d.pos).addScaledVector(d.normal, 2.4).setY(0.4).clone(), { icon, title, sub, color }, true, !!this.shop);
+      }
+    }
+    if (this.orb && this.plan.reward) {
+      const kind = rewardIcon(this.plan.reward);
+      place(this.orb.position.clone().setY(3.1), { icon: kind, title: rewardLabel(this.plan.reward), sub: "Walk over to claim", color: ICON_COLOR[kind] }, true);
+    }
+    if (this.shop)
+      for (const it of this.shop.items) {
+        if (it.sold) continue;
+        place(it.pos.clone().setY(2.4), { icon: shopIcon(it.item), title: itemName(it.item).replace(/ \(.*\)$/, ""), sub: `${it.item.price} coins${this.coins < it.item.price ? " · can't afford" : ""}`, color: this.coins >= it.item.price ? "#ffd24a" : "#9a7a70" }, false);
+      }
+    this.hud.markers(list);
   }
 
   // ── Main loop ───────────────────────────────────────────────────────────────────────
@@ -1145,6 +1584,11 @@ export class Game {
   /** One frame (exposed for testing: hidden panes throttle requestAnimationFrame). */
   frame(real: number) {
     if (this.paused) {
+      if (this.lord) {
+        this.lord.update(real, this.fx);
+        this.fx.update(real);
+        this.updateCamera(real);
+      }
       this.composer.render();
       return;
     }
@@ -1171,6 +1615,10 @@ export class Game {
     this.updateHazards(dt);
     this.updateDebris(dt);
     this.room.update(dt, this.fx);
+    if (this.phase === "fight" || this.phase === "killcam") this.room.updateTraps(dt, this);
+    this.shop?.update(dt, this.fx);
+    this.fountain?.update(dt, this.fx);
+    this.updateLord(real);
     this.fx.update(dt);
     this.updateFlow(dt, real);
     const inCombat = this.phase === "fight" && (this.enemies.some((e) => e.alive) || !!this.boss?.alive);
@@ -1178,6 +1626,8 @@ export class Game {
     this.audio.setIntensity(inCombat ? 0.2 + (this.style.rank / 6) * 0.8 : 0.35);
     this.hud.update(this, real);
     this.updateCamera(real);
+    this.updateMarkers();
+    this.updateEnemyBars(real);
     this.room.fadeOccluders(this.player.pos, this.camera.position, real);
     this.composer.render();
     this.input.endFrame();

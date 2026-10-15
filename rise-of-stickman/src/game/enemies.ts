@@ -21,15 +21,16 @@ type Def = {
   dmg: number;
   poise: number;
   souls: number;
+  coins: number;
   name: string;
   flying?: boolean;
 };
 
 export const DEFS: Record<EnemyKind, Def> = {
-  hound: { hp: 42, speed: 5.4, radius: 0.6, chest: 0.9, color: 0xff3a2a, dmg: 12, poise: 0, souls: 4, name: "Hell Hound" },
-  imp: { hp: 34, speed: 3.8, radius: 0.5, chest: 1.8, color: 0xff3050, dmg: 12, poise: 0, souls: 5, name: "Blood Demon", flying: true },
-  golem: { hp: 210, speed: 2.4, radius: 0.95, chest: 1.9, color: 0xff7a1a, dmg: 27, poise: 80, souls: 12, name: "Minotaur Berserker" },
-  mantis: { hp: 44, speed: 5.4, radius: 0.55, chest: 1.2, color: 0xff2a4a, dmg: 15, poise: 0, souls: 6, name: "Cry Wolf" },
+  hound: { hp: 55, speed: 5.6, radius: 0.6, chest: 0.9, color: 0xff3a2a, dmg: 14, poise: 0, souls: 4, coins: 3, name: "Hell Hound" },
+  imp: { hp: 44, speed: 3.9, radius: 0.5, chest: 1.8, color: 0xff3050, dmg: 13, poise: 0, souls: 5, coins: 4, name: "Blood Demon", flying: true },
+  golem: { hp: 270, speed: 2.5, radius: 0.95, chest: 1.9, color: 0xff7a1a, dmg: 30, poise: 90, souls: 12, coins: 9, name: "Minotaur Berserker" },
+  mantis: { hp: 58, speed: 5.6, radius: 0.55, chest: 1.2, color: 0xff2a4a, dmg: 17, poise: 0, souls: 6, coins: 5, name: "Cry Wolf" },
 };
 
 export const SPECS: Record<EnemyKind, CreatureSpec> = {
@@ -82,6 +83,12 @@ export const SPECS: Record<EnemyKind, CreatureSpec> = {
 
 type State = "spawn" | "chase" | "windup" | "strike" | "recover" | "hurt" | "air" | "down" | "stun" | "cast" | "dead";
 type Attack = "bite" | "slam" | "swipe" | "dash" | "cast";
+export type EliteMod = "shielded" | "enraged" | "volatile";
+export const ELITE_COLOR: Record<EliteMod, THREE.Color> = {
+  shielded: new THREE.Color(2.4, 1.9, 0.6),
+  enraged: new THREE.Color(3, 0.5, 0.1),
+  volatile: new THREE.Color(2.6, 1.0, 0.15),
+};
 
 let nextId = 1;
 const v1 = new THREE.Vector3();
@@ -128,13 +135,18 @@ export class Enemy implements Target {
   private dashDir = new THREE.Vector3();
   private orb: THREE.Mesh | null = null;
   private pitch = 0;
+  readonly elite: EliteMod | null;
+  shield = 0;
+  private aura: THREE.Mesh | null = null;
+  private bubble: THREE.Mesh | null = null;
   private game: Game;
 
-  constructor(game: Game, kind: EnemyKind, x: number, z: number) {
+  constructor(game: Game, kind: EnemyKind, x: number, z: number, elite: EliteMod | null = null) {
     this.game = game;
     this.kind = kind;
+    this.elite = elite;
     const d = (this.def = DEFS[kind]);
-    this.hp = this.maxHp = d.hp * game.hpScale;
+    this.hp = this.maxHp = d.hp * game.hpScale * (elite ? 1.7 : 1);
     this.poise = d.poise;
     this.radius = d.radius;
     this.chest = d.chest;
@@ -156,6 +168,24 @@ export class Enemy implements Target {
     this.glintSprite.visible = false;
     this.glintSprite.renderOrder = 10;
     game.scene.add(this.glintSprite);
+    if (elite) {
+      root.scale.setScalar(1.12);
+      const ec = ELITE_COLOR[elite];
+      this.aura = new THREE.Mesh(
+        new THREE.RingGeometry(this.radius + 0.25, this.radius + 0.5, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: ec, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      game.scene.add(this.aura);
+      if (elite === "shielded") {
+        this.shield = this.maxHp * 0.6;
+        this.bubble = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(1, 2),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.7, 0.55, 0.15), transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false, wireframe: true }),
+        );
+        this.bubble.scale.set(this.radius + 0.5, this.chest * 0.9 + 0.4, this.radius + 0.5);
+        game.scene.add(this.bubble);
+      }
+    }
     const c = new THREE.Color(d.color);
     game.fx.ring(this.pos, 0.2, 1.4 + d.radius, c.clone().multiplyScalar(2), 0.7);
     game.fx.smoke(v1.set(x, 0.1, z), new THREE.Color(0.01, 0.01, 0.01), 8, 0.8, 0.7);
@@ -198,16 +228,40 @@ export class Enemy implements Target {
   // ── Combat ──────────────────────────────────────────────────────────────────────────
   takeHit(h: Hit) {
     if (!this.alive) return;
-    this.hp -= h.dmg;
-    this.flashT = 0.08;
     const g = this.game;
+    let dmg = h.dmg;
+    // A shield soaks damage first and breaks into a stagger.
+    if (this.shield > 0 && !h.execute) {
+      const absorbed = Math.min(this.shield, dmg);
+      this.shield -= absorbed;
+      dmg -= absorbed;
+      if (this.bubble) (this.bubble.material as THREE.MeshBasicMaterial).opacity = 0.5;
+      if (this.shield <= 0) {
+        g.fx.sparks(v1.set(this.pos.x, this.chest, this.pos.z), ELITE_COLOR.shielded, 30, 8);
+        g.fx.ring(this.pos, 0.3, 2.5, ELITE_COLOR.shielded, 0.35);
+        g.audio.shatter();
+        g.toast("SHIELD BROKEN", "#ffd84a");
+        if (this.bubble) {
+          g.scene.remove(this.bubble);
+          this.bubble = null;
+        }
+        this.endAttack();
+        this.enter("stun");
+      }
+      if (dmg <= 0) {
+        this.vel.addScaledVector(h.dir, (h.knock ?? 0) * 0.2);
+        return;
+      }
+    }
+    this.hp -= dmg;
+    this.flashT = 0.08;
     if (this.hp <= 0 || h.execute) {
       this.hp = 0;
       this.die(h);
       return;
     }
     if (this.state === "spawn") return;
-    const armoured = this.def.poise > 0;
+    const armoured = this.def.poise > 0 || this.shield > 0;
     const knock = (h.knock ?? 0) / (armoured ? 3 : 1);
     this.vel.addScaledVector(h.dir, knock);
     if (this.frozenT > 0) return;
@@ -261,6 +315,9 @@ export class Enemy implements Target {
       this.iceMesh = null;
     }
     if (this.orb) g.scene.remove(this.orb);
+    this.dropElite();
+    if (this.elite === "volatile") g.volatileBlast(this.pos.clone());
+    g.addCoins(Math.round(this.def.coins * (this.elite ? 2.5 : 1)), this.pos);
     const c = this.c;
     c.holder.rotation.x = 0;
     if (shatter) g.shatterBody(c.root, this.pos);
@@ -297,8 +354,15 @@ export class Enemy implements Target {
     this.glintSounded = false;
   }
 
+  private dropElite() {
+    if (this.aura) this.game.scene.remove(this.aura);
+    if (this.bubble) this.game.scene.remove(this.bubble);
+    this.aura = this.bubble = null;
+  }
+
   remove() {
     this.endAttack();
+    this.dropElite();
     this.game.scene.remove(this.glintSprite);
     if (this.orb) this.game.scene.remove(this.orb);
     if (this.iceMesh) this.game.scene.remove(this.iceMesh);
@@ -345,8 +409,22 @@ export class Enemy implements Target {
         g.fx.sparks(v1.set(this.pos.x, 1, this.pos.z), new THREE.Color(0.8, 1.6, 2.4), 10, 4);
       }
     }
+    if (this.elite === "enraged") tdt *= 1.3;
     this.st += tdt;
     this.attackCd -= tdt;
+    if (this.aura) {
+      this.aura.position.set(this.pos.x, 0.04, this.pos.z);
+      (this.aura.material as THREE.MeshBasicMaterial).opacity = 0.4 + Math.sin(g.time * 6) * 0.2;
+    }
+    if (this.bubble) {
+      this.bubble.position.set(this.pos.x, this.chest * 0.7 + this.air, this.pos.z);
+      const m = this.bubble.material as THREE.MeshBasicMaterial;
+      m.opacity += (0.35 - m.opacity) * Math.min(1, dt * 6);
+      this.bubble.rotation.y += dt;
+    }
+    if (this.elite === "enraged" && Math.random() < dt * 18)
+      g.fx.fire(v1.set(this.pos.x + (Math.random() - 0.5) * this.radius, Math.random() * this.chest + this.air, this.pos.z + (Math.random() - 0.5) * this.radius), 1, 0.2, 0.7);
+    if (this.elite === "volatile" && Math.random() < dt * 10) g.fx.embers(v1.set(this.pos.x, this.chest * 0.6, this.pos.z), 1, this.radius);
 
     const dx = p.pos.x - this.pos.x;
     const dz = p.pos.z - this.pos.z;
@@ -657,7 +735,7 @@ export class Enemy implements Target {
         if (a === "dash") {
           if (Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z) < 1.3) {
             this.struck = true;
-            g.enemyAttack(this, this.def.dmg, { parryable: true, kind: "melee", knock: 9 });
+            g.enemyAttack(this, this.hitDmg(), { parryable: true, kind: "melee", knock: 9 });
           }
         } else {
           this.struck = true;
@@ -669,12 +747,12 @@ export class Enemy implements Target {
             g.fx.fire(v1, 8, 1.6, 1.2);
             g.audio.boom(1);
             g.shake(0.35);
-            if (Math.hypot(p.pos.x - v1.x, p.pos.z - v1.z) < 2.7) g.enemyAttack(this, this.def.dmg, { parryable: false, kind: "aoe", knock: 12 });
+            if (Math.hypot(p.pos.x - v1.x, p.pos.z - v1.z) < 2.7) g.enemyAttack(this, this.hitDmg(), { parryable: false, kind: "aoe", knock: 12 });
           } else {
             const reach = a === "swipe" ? 3.3 : 2.1;
             const cone = a === "swipe" ? 1.15 : 0.9;
             const off = Math.abs(angDiff(toYaw, this.yaw));
-            if (dist < reach + 0.35 && off < cone) g.enemyAttack(this, this.def.dmg * (a === "swipe" ? 0.8 : 1), { parryable: true, kind: "melee", knock: 7 });
+            if (dist < reach + 0.35 && off < cone) g.enemyAttack(this, this.hitDmg() * (a === "swipe" ? 0.8 : 1), { parryable: true, kind: "melee", knock: 7 });
           }
         }
       }
@@ -695,9 +773,13 @@ export class Enemy implements Target {
     const rec = this.kind === "golem" ? 1.0 : this.kind === "imp" ? 0.45 : 0.65;
     if (this.st >= rec) {
       this.endAttack();
-      this.attackCd = (this.kind === "imp" ? 2.2 : this.kind === "golem" ? 1.6 : 1.1) + Math.random() * 1.2;
+      this.attackCd = ((this.kind === "imp" ? 1.7 : this.kind === "golem" ? 1.3 : 0.75) + Math.random() * 0.9) * (this.elite === "enraged" ? 0.55 : 1);
       this.enter("chase");
     }
+  }
+
+  private hitDmg() {
+    return this.def.dmg * (this.elite === "enraged" ? 1.25 : 1);
   }
 
   private fireHex() {
@@ -706,7 +788,7 @@ export class Enemy implements Target {
     if (this.orb) this.orb.visible = false;
     const p = g.player.pos;
     v2.set(p.x - v1.x, 0, p.z - v1.z).normalize();
-    g.spawnHex(v1.clone().setY(Math.min(1.6, v1.y)), v2.clone().multiplyScalar(10.5), this.def.dmg);
+    g.spawnHex(v1.clone().setY(Math.min(1.6, v1.y)), v2.clone().multiplyScalar(11.5), this.hitDmg());
     g.audio.cast();
   }
 }

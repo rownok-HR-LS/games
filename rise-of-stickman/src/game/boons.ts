@@ -1,13 +1,22 @@
-// In-run powers: elemental blessings (one per slot), cursed relics (strong with a downside)
-// and new moves. Mods is the flattened result the combat code reads.
+// In-run powers: elemental blessings (one per slot, with rarity and level), cursed relics
+// (strong with a downside) and new moves. Mods is the flattened result the combat code reads;
+// power(id) is a blessing's strength multiplier (0 when not owned).
 import type { IconKind } from "./textures";
 
 export type Element = "fire" | "ice" | "lightning" | "shadow";
 export type Slot = "blade" | "guns" | "dash" | "aux";
+export type Rarity = "common" | "rare" | "epic" | "heroic";
 
 export type Blessing = { id: string; element: Element; slot: Slot; name: string; text: string };
+export type Owned = Blessing & { rarity: Rarity; level: number };
 export type Relic = { id: string; name: string; boon: string; curse: string };
 export type Move = { id: string; name: string; text: string };
+
+export const RARITY_MULT: Record<Rarity, number> = { common: 1, rare: 1.4, epic: 1.8, heroic: 2.3 };
+export const RARITY_COLOR: Record<Rarity, string> = { common: "#c9c3bd", rare: "#58a8ff", epic: "#c06bff", heroic: "#ff4a3a" };
+const RARITY_ORDER: Rarity[] = ["common", "rare", "epic", "heroic"];
+/** Each Ember Heart level adds this much on top of the rarity multiplier. */
+export const LEVEL_STEP = 0.3;
 
 export const BLESSINGS: Blessing[] = [
   { id: "fire_blade", element: "fire", slot: "blade", name: "Infernal Edge", text: "Katana hits set enemies ablaze: 24 damage over 3 seconds." },
@@ -37,7 +46,7 @@ export const RELICS: Relic[] = [
   { id: "hook", name: "Gravedigger's Hook", boon: "Kills heal 3.", curse: "−15% damage." },
   { id: "hourglass", name: "Hourglass of Ash", boon: "Parry window doubled.", curse: "One fewer dash charge." },
   { id: "eye", name: "Demon's Eye", boon: "+60% style points.", curse: "You take 25% more damage." },
-  { id: "crown", name: "Broken Crown", boon: "Wrath fills twice as fast.", curse: "Wrath form lasts 6 s instead of 10." },
+  { id: "crown", name: "Broken Crown", boon: "Wrath fills twice as fast.", curse: "Wrath form lasts 4 s instead of 7." },
 ];
 
 export const MOVES: Move[] = [
@@ -54,16 +63,30 @@ export const ELEMENT_COLOR: Record<Element, string> = {
   shadow: "#b06bff",
 };
 
+// ── Rooms and rewards ─────────────────────────────────────────────────────────────────
+export type RoomType = "combat" | "elite" | "abyss" | "shop" | "fountain" | "miniboss" | "boss";
+
 export type Reward =
-  | { kind: "blessing"; element: Element }
+  | { kind: "blessing"; element: Element; minRarity?: Rarity }
   | { kind: "relic" }
   | { kind: "move" }
   | { kind: "health" }
-  | { kind: "souls" }
-  | { kind: "boss" };
+  | { kind: "coins"; amount: number }
+  | { kind: "ember" };
+
+export type DoorPlan = { type: RoomType; reward: Reward | null };
 
 export function rewardIcon(r: Reward): IconKind {
-  return r.kind === "blessing" ? r.element : r.kind === "relic" ? "relic" : r.kind === "move" ? "move" : r.kind === "health" ? "health" : r.kind === "souls" ? "souls" : "boss";
+  switch (r.kind) {
+    case "blessing":
+      return r.element;
+    case "coins":
+      return "coins";
+    case "ember":
+      return "ember";
+    default:
+      return r.kind;
+  }
 }
 
 export function rewardLabel(r: Reward) {
@@ -76,11 +99,29 @@ export function rewardLabel(r: Reward) {
       return "New Move";
     case "health":
       return "Blood Font";
-    case "souls":
-      return "Demon Souls";
-    case "boss":
-      return "Cerberus";
+    case "coins":
+      return `${r.amount} Bone Coins`;
+    case "ember":
+      return "Ember Heart";
   }
+}
+
+export function doorIcon(d: DoorPlan): IconKind {
+  if (d.type === "shop") return "shop";
+  if (d.type === "fountain") return "fountain";
+  if (d.type === "miniboss" || d.type === "boss") return "boss";
+  return d.reward ? rewardIcon(d.reward) : "souls";
+}
+
+export function rollRarity(min: Rarity = "common"): Rarity {
+  const x = Math.random();
+  let r: Rarity = x < 0.06 ? "epic" : x < 0.3 ? "rare" : "common";
+  if (RARITY_ORDER.indexOf(r) < RARITY_ORDER.indexOf(min)) r = min;
+  return r;
+}
+
+export function bumpRarity(r: Rarity): Rarity {
+  return RARITY_ORDER[Math.min(RARITY_ORDER.length - 1, RARITY_ORDER.indexOf(r) + 1)];
 }
 
 export type Mods = {
@@ -97,7 +138,7 @@ export type Mods = {
 };
 
 export class Loadout {
-  slots: Partial<Record<Slot, Blessing>> = {};
+  slots: Partial<Record<Slot, Owned>> = {};
   relics: Relic[] = [];
   moves = new Set<string>();
 
@@ -106,8 +147,27 @@ export class Loadout {
     return this.relics.some((r) => r.id === id) || this.moves.has(id);
   }
 
+  owned(): Owned[] {
+    return Object.values(this.slots).filter((b): b is Owned => !!b);
+  }
+
+  /** Strength multiplier of a blessing (0 if not owned). */
+  power(id: string) {
+    for (const b of this.owned()) if (b.id === id) return RARITY_MULT[b.rarity] * (1 + LEVEL_STEP * (b.level - 1));
+    return 0;
+  }
+
+  take(b: Blessing, rarity: Rarity) {
+    this.slots[b.slot] = { ...b, rarity, level: 1 };
+  }
+
+  levelUp(id: string) {
+    const b = this.owned().find((x) => x.id === id);
+    if (b) b.level++;
+  }
+
   mods(): Mods {
-    const m: Mods = { dmg: 1, taken: 1, heal: 1, maxHp: 1, style: 1, wrathGain: 1, wrathDur: 10, parryWindow: 1, dashCharges: 2, killHeal: 0 };
+    const m: Mods = { dmg: 1, taken: 1, heal: 1, maxHp: 1, style: 1, wrathGain: 1, wrathDur: 7, parryWindow: 1, dashCharges: 2, killHeal: 0 };
     for (const r of this.relics) {
       if (r.id === "pact") {
         m.dmg *= 1.4;
@@ -126,15 +186,15 @@ export class Loadout {
         m.taken *= 1.25;
       } else if (r.id === "crown") {
         m.wrathGain *= 2;
-        m.wrathDur = 6;
+        m.wrathDur = 4;
       }
     }
     if (this.moves.has("phantom")) m.dashCharges += 1;
-    if (this.has("shadow_aux")) m.killHeal += 2;
+    m.killHeal += 2 * this.power("shadow_aux");
     return m;
   }
 
-  /** Three blessing offers of an element (prefers empty slots and new ones). */
+  /** Three blessing offers of an element (skipping ones already held at the same slot). */
   offerBlessings(el: Element): Blessing[] {
     return BLESSINGS.filter((b) => b.element === el && this.slots[b.slot]?.id !== b.id)
       .sort(() => Math.random() - 0.5)

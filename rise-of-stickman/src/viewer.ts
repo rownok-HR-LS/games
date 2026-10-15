@@ -70,6 +70,7 @@ w.show = (k, clipName, t, yaw = 0) => {
     }
   }
   w.view(0.6, 1);
+  renderer.render(scene, camera);
   info.textContent = `${k}: raw size ${size.toArray().map((v) => v.toFixed(2)).join(" x ")} (scaled ${s.toFixed(4)})\n` + clips.map((x) => `${x.name} dur ${x.duration.toFixed(2)} keys ${keyRange(x).map((v) => v.toFixed(2)).join("-")}`).join("\n");
   return info.textContent;
 };
@@ -77,9 +78,10 @@ w.show = (k, clipName, t, yaw = 0) => {
 w.view = (yaw, h) => {
   camera.position.set(Math.sin(yaw) * 5.5, 1.2 + h, Math.cos(yaw) * 5.5);
   camera.lookAt(0, 1, 0);
+  renderer.render(scene, camera);
 };
 
-loadModels().then(() => {
+loadModels(undefined, Object.keys(MODEL_URLS) as ModelKey[]).then(() => {
   for (const k of Object.keys(MODEL_URLS) as ModelKey[]) {
     const b = document.createElement("button");
     b.textContent = k;

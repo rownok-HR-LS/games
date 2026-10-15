@@ -43,6 +43,8 @@ export class Boss implements Target {
   readonly chest = 2.4;
   readonly isBoss = true;
   readonly name = "The Chained Cerberus";
+  readonly title = "Warden of the Bone Pits";
+  readonly final = true;
   hp: number;
   maxHp: number;
   alive = true;
@@ -78,7 +80,7 @@ export class Boss implements Target {
 
   constructor(game: Game, x: number, z: number) {
     this.game = game;
-    this.hp = this.maxHp = 3000 * game.hpScale;
+    this.hp = this.maxHp = 4200 * game.hpScale;
     this.pos.set(x, 0, z);
     const root = this.c.root;
     root.position.copy(this.pos);

@@ -30,10 +30,10 @@ import type { AttackOpts, AttackResult, Target } from "./types";
 type State = "move" | "slash" | "dash" | "parry" | "parryRecover" | "execute" | "hurt" | "wrathIntro" | "charge" | "splitter" | "dead";
 
 const SPEED = 7.4;
-const MAG = 12;
-const RELOAD = 0.95;
-const PERFECT_LO = 0.36;
-const PERFECT_HI = 0.56;
+export const MAG = 8;
+const RELOAD = 1.25;
+const PERFECT_LO = 0.5;
+const PERFECT_HI = 0.72;
 
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
@@ -60,6 +60,9 @@ export class Player {
   yaw = 0;
   hp = 100;
   maxHp = 100;
+  /** Extra lives left this run (Death Defiance). */
+  defiance = 1;
+  defianceMax = 1;
   wrath = 0;
   wrathT = 0;
   state: State = "move";
@@ -472,10 +475,10 @@ export class Player {
   }
 
   private slashColor() {
-    if (this.inWrath) return new THREE.Color(3, 0.7, 0.12);
+    if (this.inWrath) return new THREE.Color(1.5, 0.35, 0.06);
     const el = this.game.loadout.slots.blade?.element;
-    if (el) return ELEMENT_RGB[el].clone().multiplyScalar(0.55);
-    return new THREE.Color(0.75, 0.9, 1.5);
+    if (el) return ELEMENT_RGB[el].clone().multiplyScalar(0.32);
+    return new THREE.Color(0.38, 0.45, 0.7);
   }
 
   private arc(f: SlashDef["fx"]) {
@@ -485,7 +488,7 @@ export class Player {
     const start = fwd.clone().applyAxisAngle(n, f.sweep >= Math.PI * 1.9 ? 0 : f.sweep / 2 + (f.offset ?? 0));
     const c = new THREE.Vector3(this.pos.x, f.height, this.pos.z);
     const scale = this.inWrath ? 1.3 : 1;
-    this.game.fx.slash(c, start, n, f.sweep, f.radius * scale, this.slashColor(), { width: (f.width ?? 0.8) * scale, dur: 0.3 });
+    this.game.fx.slash(c, start, n, f.sweep, f.radius * scale, this.slashColor(), { width: (f.width ?? 0.8) * 0.55 * scale, dur: 0.2 });
   }
 
   private hitAround(def: SlashDef, range: number, path: boolean) {
@@ -509,7 +512,7 @@ export class Player {
       if (def.cone >= Math.PI && !path) dir.lerp(new THREE.Vector3(fx, 0, fz), 0.2).normalize();
       let dmg = def.dmg * mods.dmg * (this.inWrath ? 1.8 : 1);
       let crit = false;
-      if (g.loadout.has("shadow_blade") && Math.random() < 0.25) {
+      if (Math.random() < 0.18 * g.loadout.power("shadow_blade")) {
         dmg *= 2;
         crit = true;
       }
@@ -615,11 +618,21 @@ export class Player {
       return "dodged";
     }
     // Take the hit.
-    const taken = dmg * g.mods.taken * (this.inWrath ? 0.35 : 1);
+    const taken = dmg * g.mods.taken * g.dmgScale * (this.inWrath ? 0.6 : 1);
     this.hp -= taken;
     g.onPlayerHurt(taken);
-    this.iframes = 0.55;
+    this.iframes = 0.35;
     if (this.hp <= 0) {
+      if (this.defiance > 0) {
+        // Death Defiance: rise again with 40% health.
+        this.defiance--;
+        this.hp = Math.round(this.maxHp * 0.4);
+        this.iframes = 1.6;
+        this.vel.set(0, 0, 0);
+        this.enter("move");
+        g.onDefiance(this.pos);
+        return "hit";
+      }
       this.hp = 0;
       this.enter("dead");
       g.onPlayerDeath();
@@ -706,7 +719,7 @@ export class Player {
       this.tryReload();
       return;
     }
-    this.fireT = 0.09;
+    this.fireT = 0.13;
     this.ammo--;
     this.shots++;
     const hand = this.hand;
@@ -724,7 +737,7 @@ export class Player {
     g.fx.casing(muzzle, dir.x, dir.z);
     g.shake(0.05);
     g.fireBullet(muzzle, dir, {
-      dmg: (perfect ? 9 : 6) * g.mods.dmg * (this.inWrath ? 1.8 : 1),
+      dmg: (perfect ? 6 : 4) * g.mods.dmg * (this.inWrath ? 1.8 : 1),
       pierce: lightning || g.loadout.has("shadow_guns"),
       lightning,
       perfect,
@@ -819,10 +832,11 @@ export class Player {
     this.auxT += dt;
     if (this.auxT >= 0.4) {
       this.auxT = 0;
-      if (g.loadout.has("fire_aux"))
+      const pyre = g.loadout.power("fire_aux");
+      if (pyre)
         for (const t of g.targets())
           if (Math.hypot(t.pos.x - this.pos.x, t.pos.z - this.pos.z) < 3 + t.radius)
-            g.damage(t, { dmg: 6, dir: new THREE.Vector3(), kind: "element", move: "pyre", element: "fire", proc: true });
+            g.damage(t, { dmg: 6 * pyre, dir: new THREE.Vector3(), kind: "element", move: "pyre", element: "fire", proc: true });
       if (g.loadout.has("lightning_aux")) g.lightningStrike(this.pos, 9);
     }
   }

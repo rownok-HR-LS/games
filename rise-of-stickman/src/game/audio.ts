@@ -354,6 +354,54 @@ export class Audio {
     this.tone(this.now(), "triangle", 880, 660, 0.08, 0.08);
   }
 
+  trapClick() {
+    if (!this.ok() || !this.gate("click", 80)) return;
+    const t = this.now();
+    this.nz(t, 0.04, 0.35, "bandpass", 2600, 2200, 6);
+    this.tone(t, "square", 1400, 900, 0.05, 0.05);
+  }
+
+  spikes() {
+    if (!this.ok() || !this.gate("spikes", 60)) return;
+    const t = this.now();
+    this.nz(t, 0.12, 0.5, "highpass", 3000, 1500, 1.5);
+    this.tone(t, "sawtooth", 600, 200, 0.12, 0.12);
+  }
+
+  coin() {
+    if (!this.ok() || !this.gate("coin", 60)) return;
+    const t = this.now();
+    this.tone(t, "triangle", 1568, 1568, 0.08, 0.06);
+    this.tone(t + 0.05, "triangle", 2093, 2093, 0.12, 0.05);
+  }
+
+  buy() {
+    if (!this.ok()) return;
+    const t = this.now();
+    for (const [i, f] of [784, 988, 1175, 1568].entries()) this.tone(t + i * 0.05, "triangle", f, f, 0.25, 0.09, 0.4);
+  }
+
+  deny() {
+    if (!this.ok() || !this.gate("deny", 200)) return;
+    const t = this.now();
+    this.tone(t, "square", 220, 160, 0.2, 0.08);
+  }
+
+  fountain() {
+    if (!this.ok()) return;
+    const t = this.now();
+    this.nz(t, 1.2, 0.25, "lowpass", 600, 1800, 1, 0.5);
+    for (const [i, f] of [392, 494, 587, 784].entries()) this.tone(t + i * 0.09, "sine", f, f, 0.9, 0.08, 0.6);
+  }
+
+  defiance() {
+    if (!this.ok()) return;
+    const t = this.now();
+    this.tone(t, "sawtooth", 80, 220, 1.0, 0.25, 0.6);
+    this.nz(t, 1.0, 0.5, "bandpass", 300, 3000, 1, 0.6);
+    for (const [i, f] of [262, 330, 392, 523].entries()) this.tone(t + 0.3 + i * 0.08, "triangle", f, f, 0.8, 0.1, 0.6);
+  }
+
   killcam() {
     if (!this.ok()) return;
     const t = this.now();

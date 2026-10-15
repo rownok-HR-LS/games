@@ -21,104 +21,231 @@ function rng(seed: number) {
 
 export type FloorTheme = { stone: [number, number, number]; grout: string; crack: string; glow: string };
 
-/** Flagstone floor: returns colour map + emissive map (glowing cracks), both tileable. */
+/**
+ * Flagstone floor, tileable: colour map (bevelled worn stones, soot and old blood, chips, hairline
+ * fractures), emissive map (lava seeping through some seams) and a normal map built from a height map.
+ */
 export function floorTextures(theme: FloorTheme, seed = 7) {
   const S = 1024;
   const r = rng(seed);
   const [c, g] = canvas(S);
   const [ec, eg] = canvas(S);
+  const [hc, hg] = canvas(S);
   g.fillStyle = theme.grout;
   g.fillRect(0, 0, S, S);
   eg.fillStyle = "#000";
   eg.fillRect(0, 0, S, S);
-  // Rows of irregular stones.
+  hg.fillStyle = "#000";
+  hg.fillRect(0, 0, S, S);
+
+  // Row heights and stone widths that sum exactly to S, so the layout wraps seamlessly.
+  const fit = (min: number, span: number) => {
+    const out: number[] = [];
+    let sum = 0;
+    while (sum < S - min * 0.5) {
+      const v = min + r() * span;
+      out.push(v);
+      sum += v;
+    }
+    return out.map((v) => (v * S) / sum);
+  };
+  type Stone = { x: number; y: number; w: number; h: number };
+  const stones: Stone[] = [];
   let y = 0;
-  while (y < S) {
-    const rh = 90 + Math.floor(r() * 70);
-    const h = Math.min(rh, S - y);
-    let x = -Math.floor(r() * 80);
-    while (x < S) {
-      const w = 110 + Math.floor(r() * 120);
-      const [sr, sg, sb] = theme.stone;
-      const v = 0.75 + r() * 0.5;
-      g.fillStyle = `rgb(${sr * v | 0},${sg * v | 0},${sb * v | 0})`;
-      const pad = 4 + r() * 3;
-      roundRect(g, x + pad, y + pad, w - pad * 2, h - pad * 2, 10);
-      g.fill();
-      // Wear: darker blotches and light scratches.
-      for (let i = 0; i < 14; i++) {
-        g.fillStyle = `rgba(0,0,0,${0.05 + r() * 0.1})`;
-        g.beginPath();
-        g.arc(x + r() * w, y + r() * h, 6 + r() * 26, 0, Math.PI * 2);
-        g.fill();
-      }
-      g.strokeStyle = "rgba(255,230,210,0.05)";
-      g.lineWidth = 1;
-      for (let i = 0; i < 4; i++) {
-        g.beginPath();
-        const sx = x + r() * w;
-        const sy = y + r() * h;
-        g.moveTo(sx, sy);
-        g.lineTo(sx + (r() - 0.5) * 60, sy + (r() - 0.5) * 30);
-        g.stroke();
-      }
+  for (const rh of fit(100, 70)) {
+    let x = r() * S;
+    for (const w of fit(120, 130)) {
+      stones.push({ x, y, w, h: rh });
       x += w;
     }
     y += rh;
   }
-  // Speckle noise.
+  // Draw a shape at its position and at its wrapped copies.
+  const wrap = (s: Stone, f: (x: number, y: number) => void) => {
+    for (const ox of [-S, 0, S])
+      for (const oy of [-S, 0, S]) {
+        const x = s.x % S + ox;
+        const yy = s.y + oy;
+        if (x + s.w < 0 || x > S || yy + s.h < 0 || yy > S) continue;
+        f(x, yy);
+      }
+  };
+  const [sr, sg, sb] = theme.stone;
+  for (const s of stones) {
+    const v = 0.72 + r() * 0.45;
+    const warm = (r() - 0.5) * 10;
+    const pad = 5 + r() * 3;
+    const rad = 8 + r() * 10;
+    const stain = r();
+    const blots = Array.from({ length: 10 }, () => [r() * s.w, r() * s.h, 8 + r() * 30, 0.04 + r() * 0.1]);
+    const chips = Array.from({ length: 3 }, () => [r() < 0.5 ? pad : s.w - pad, r() < 0.5 ? pad : s.h - pad, 6 + r() * 10]);
+    const hBase = 150 + r() * 60;
+    const fracture = r() < 0.3 ? Array.from({ length: 7 }, () => r()) : null;
+    wrap(s, (x, yy) => {
+      const ix = x + pad;
+      const iy = yy + pad;
+      const iw = s.w - pad * 2;
+      const ih = s.h - pad * 2;
+      // Colour.
+      g.fillStyle = `rgb(${(sr * v + warm) | 0},${(sg * v) | 0},${(sb * v - warm * 0.5) | 0})`;
+      roundRect(g, ix, iy, iw, ih, rad);
+      g.fill();
+      g.save();
+      roundRect(g, ix, iy, iw, ih, rad);
+      g.clip();
+      for (const [bx, by, br, ba] of blots) {
+        g.fillStyle = `rgba(0,0,0,${ba})`;
+        g.beginPath();
+        g.arc(x + bx, yy + by, br, 0, Math.PI * 2);
+        g.fill();
+      }
+      if (stain < 0.18) {
+        // Old blood or soot pooled on the stone.
+        const grd = g.createRadialGradient(x + s.w * 0.5, yy + s.h * 0.5, 4, x + s.w * 0.5, yy + s.h * 0.5, Math.max(s.w, s.h) * 0.55);
+        grd.addColorStop(0, stain < 0.09 ? "rgba(70,6,4,0.55)" : "rgba(8,4,3,0.5)");
+        grd.addColorStop(1, "rgba(0,0,0,0)");
+        g.fillStyle = grd;
+        g.fillRect(x, yy, s.w, s.h);
+      }
+      // Bevel: lit top-left edge, shadowed bottom-right edge.
+      g.lineWidth = 5;
+      g.strokeStyle = "rgba(255,225,205,0.09)";
+      roundRect(g, ix + 2, iy + 2, iw, ih, rad);
+      g.stroke();
+      g.strokeStyle = "rgba(0,0,0,0.45)";
+      roundRect(g, ix - 2, iy - 2, iw, ih, rad);
+      g.stroke();
+      g.restore();
+      // Chipped corners.
+      g.fillStyle = theme.grout;
+      for (const [cx, cy, cr] of chips) {
+        g.beginPath();
+        g.moveTo(x + cx, yy + cy);
+        g.lineTo(x + cx + (cx < s.w / 2 ? cr : -cr), yy + cy);
+        g.lineTo(x + cx, yy + cy + (cy < s.h / 2 ? cr : -cr));
+        g.fill();
+      }
+      // Height: raised stone with a soft bevelled edge.
+      hg.fillStyle = `rgb(${hBase * 0.55 | 0},${hBase * 0.55 | 0},${hBase * 0.55 | 0})`;
+      roundRect(hg, ix, iy, iw, ih, rad);
+      hg.fill();
+      hg.save();
+      hg.shadowColor = `rgb(${hBase | 0},${hBase | 0},${hBase | 0})`;
+      hg.shadowBlur = 10;
+      hg.fillStyle = hg.shadowColor;
+      roundRect(hg, ix + 7, iy + 7, iw - 14, ih - 14, rad);
+      hg.fill();
+      hg.restore();
+      // Hairline fracture across some stones.
+      if (fracture) {
+        const pts: [number, number][] = [];
+        let px = x + s.w * (0.2 + fracture[0] * 0.6);
+        let py = yy + pad;
+        let ang = Math.PI / 2 + (fracture[1] - 0.5);
+        for (let i = 0; i < 9; i++) {
+          pts.push([px, py]);
+          ang += (fracture[(i + 2) % 7] - 0.5) * 0.9;
+          px += Math.cos(ang) * (s.h / 9);
+          py += Math.sin(ang) * (s.h / 9);
+        }
+        for (const [ctx, col, wdt] of [
+          [g, "rgba(6,3,2,0.9)", 2],
+          [hg, "rgba(0,0,0,1)", 3],
+        ] as const) {
+          ctx.strokeStyle = col;
+          ctx.lineWidth = wdt;
+          ctx.beginPath();
+          pts.forEach(([a, b], i) => (i ? ctx.lineTo(a, b) : ctx.moveTo(a, b)));
+          ctx.stroke();
+        }
+        if (fracture[6] < 0.5) {
+          eg.save();
+          eg.strokeStyle = theme.glow;
+          eg.globalAlpha = 0.55;
+          eg.shadowColor = theme.glow;
+          eg.shadowBlur = 6;
+          eg.lineWidth = 2;
+          eg.beginPath();
+          pts.forEach(([a, b], i) => (i ? eg.lineTo(a, b) : eg.moveTo(a, b)));
+          eg.stroke();
+          eg.restore();
+        }
+      }
+    });
+  }
+  // Lava seeping up through some of the seams between stones.
+  for (const s of stones) {
+    if (r() > 0.22) continue;
+    const side = Math.floor(r() * 4);
+    const from = 0.1 + r() * 0.3;
+    const to = from + 0.3 + r() * 0.4;
+    wrap(s, (x, yy) => {
+      const seg: [number, number, number, number] =
+        side === 0
+          ? [x + s.w * from, yy, x + s.w * to, yy]
+          : side === 1
+            ? [x + s.w * from, yy + s.h, x + s.w * to, yy + s.h]
+            : side === 2
+              ? [x, yy + s.h * from, x, yy + s.h * to]
+              : [x + s.w, yy + s.h * from, x + s.w, yy + s.h * to];
+      for (const [col, wdt, blur, alpha] of [
+        [theme.glow, 7, 14, 0.7],
+        [theme.crack, 1.6, 0, 0.9],
+      ] as const) {
+        eg.save();
+        eg.globalAlpha = alpha;
+        eg.strokeStyle = col;
+        eg.lineWidth = wdt;
+        eg.lineCap = "round";
+        eg.shadowColor = col;
+        eg.shadowBlur = blur;
+        eg.beginPath();
+        eg.moveTo(seg[0], seg[1]);
+        eg.lineTo(seg[2], seg[3]);
+        eg.stroke();
+        eg.restore();
+      }
+    });
+  }
+  // Fine grain on colour and height.
   const img = g.getImageData(0, 0, S, S);
+  const himg = hg.getImageData(0, 0, S, S);
   for (let i = 0; i < img.data.length; i += 4) {
-    const n = (r() - 0.5) * 22;
+    const n = (r() - 0.5) * 20;
     img.data[i] += n;
     img.data[i + 1] += n;
     img.data[i + 2] += n;
+    himg.data[i] += (r() - 0.5) * 14;
   }
   g.putImageData(img, 0, 0);
-  // Glowing cracks (jagged walks), drawn into both maps.
-  for (let k = 0; k < 4; k++) {
-    let px = r() * S;
-    let py = r() * S;
-    let ang = r() * Math.PI * 2;
-    const len = 18 + Math.floor(r() * 30);
-    const pts: [number, number][] = [[px, py]];
-    for (let i = 0; i < len; i++) {
-      ang += (r() - 0.5) * 1.1;
-      px += Math.cos(ang) * 14;
-      py += Math.sin(ang) * 14;
-      pts.push([px, py]);
+  // Normal map from the height map (wrapping at the edges).
+  const [nc, ng] = canvas(S);
+  const nimg = ng.createImageData(S, S);
+  const hgt = (x: number, yy: number) => himg.data[(((yy + S) % S) * S + ((x + S) % S)) * 4] / 255;
+  const strength = 3.2;
+  for (let yy = 0; yy < S; yy++)
+    for (let x = 0; x < S; x++) {
+      const dx = (hgt(x - 1, yy) - hgt(x + 1, yy)) * strength;
+      const dy = (hgt(x, yy - 1) - hgt(x, yy + 1)) * strength;
+      const l = Math.hypot(dx, dy, 1);
+      const o = (yy * S + x) * 4;
+      nimg.data[o] = ((dx / l) * 0.5 + 0.5) * 255;
+      nimg.data[o + 1] = ((-dy / l) * 0.5 + 0.5) * 255;
+      nimg.data[o + 2] = ((1 / l) * 0.5 + 0.5) * 255;
+      nimg.data[o + 3] = 255;
     }
-    for (const [ctx, col, wdt, blur] of [
-      [g, "#120806", 4, 0],
-      [eg, theme.glow, 5, 8],
-      [eg, theme.crack, 1.5, 0],
-    ] as const) {
-      ctx.save();
-      ctx.strokeStyle = col;
-      ctx.lineWidth = wdt;
-      ctx.lineJoin = "round";
-      ctx.shadowColor = col;
-      ctx.shadowBlur = blur;
-      ctx.beginPath();
-      // Draw wrapped copies so the texture tiles.
-      for (const ox of [-S, 0, S])
-        for (const oy of [-S, 0, S]) {
-          ctx.moveTo(pts[0][0] + ox, pts[0][1] + oy);
-          for (const p of pts) ctx.lineTo(p[0] + ox, p[1] + oy);
-        }
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
+  ng.putImageData(nimg, 0, 0);
+  void hc;
   const map = new THREE.CanvasTexture(c);
   map.colorSpace = THREE.SRGBColorSpace;
   const emissive = new THREE.CanvasTexture(ec);
   emissive.colorSpace = THREE.SRGBColorSpace;
-  for (const t of [map, emissive]) {
+  const normal = new THREE.CanvasTexture(nc);
+  for (const t of [map, emissive, normal]) {
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.anisotropy = 8;
   }
-  return { map, emissive };
+  return { map, emissive, normal };
 }
 
 /** Large dark masonry blocks for walls and pillars. */
@@ -214,7 +341,7 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
 }
 
 // ── Reward icons ──────────────────────────────────────────────────────────────────────
-export type IconKind = "fire" | "ice" | "lightning" | "shadow" | "relic" | "health" | "souls" | "move" | "boss";
+export type IconKind = "fire" | "ice" | "lightning" | "shadow" | "relic" | "health" | "souls" | "move" | "boss" | "coins" | "ember" | "shop" | "fountain";
 
 export const ICON_COLOR: Record<IconKind, string> = {
   fire: "#ff6a1a",
@@ -226,6 +353,10 @@ export const ICON_COLOR: Record<IconKind, string> = {
   souls: "#9ef0ff",
   move: "#ffffff",
   boss: "#ff2010",
+  coins: "#ffd24a",
+  ember: "#ff7a3a",
+  shop: "#ffd24a",
+  fountain: "#ff2a4a",
 };
 
 const iconCache = new Map<IconKind, HTMLCanvasElement>();
@@ -387,6 +518,77 @@ export function iconCanvas(kind: IconKind) {
       g.beginPath();
       g.ellipse(-18, 0, 13, 15, 0, 0, Math.PI * 2);
       g.ellipse(18, 0, 13, 15, 0, 0, Math.PI * 2);
+      g.fill();
+      break;
+    case "coins":
+      // A small stack of bone coins.
+      for (const [x, y] of [
+        [-26, 28],
+        [22, 22],
+        [-4, -8],
+      ]) {
+        g.beginPath();
+        g.ellipse(x, y, 34, 30, 0, 0, Math.PI * 2);
+        g.fill();
+        g.save();
+        g.fillStyle = col;
+        g.shadowBlur = 0;
+        g.beginPath();
+        g.ellipse(x, y, 12, 14, 0, 0, Math.PI * 2);
+        g.fill();
+        g.restore();
+      }
+      break;
+    case "ember":
+      // A burning heart.
+      g.beginPath();
+      g.moveTo(0, 62);
+      g.bezierCurveTo(-70, 10, -60, -50, -22, -50);
+      g.bezierCurveTo(-6, -50, 0, -36, 0, -26);
+      g.bezierCurveTo(0, -36, 6, -50, 22, -50);
+      g.bezierCurveTo(60, -50, 70, 10, 0, 62);
+      g.fill();
+      g.fillStyle = col;
+      g.beginPath();
+      g.moveTo(0, 40);
+      g.quadraticCurveTo(-22, 10, 0, -14);
+      g.quadraticCurveTo(22, 10, 0, 40);
+      g.fill();
+      break;
+    case "shop":
+      // Merchant's skull with a coin in its jaw.
+      g.beginPath();
+      g.arc(0, -14, 50, Math.PI, 0);
+      g.lineTo(36, 30);
+      g.lineTo(-36, 30);
+      g.closePath();
+      g.fill();
+      g.fillStyle = "#000";
+      g.shadowBlur = 0;
+      g.beginPath();
+      g.ellipse(-18, -10, 12, 14, 0, 0, Math.PI * 2);
+      g.ellipse(18, -10, 12, 14, 0, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = col;
+      g.beginPath();
+      g.arc(0, 52, 22, 0, Math.PI * 2);
+      g.fill();
+      break;
+    case "fountain":
+      // A blood fountain basin.
+      g.beginPath();
+      g.moveTo(-64, 10);
+      g.lineTo(64, 10);
+      g.quadraticCurveTo(54, 50, 0, 54);
+      g.quadraticCurveTo(-54, 50, -64, 10);
+      g.fill();
+      g.fillRect(-10, 50, 20, 26);
+      g.fillStyle = col;
+      g.beginPath();
+      g.moveTo(0, -70);
+      g.bezierCurveTo(20, -40, 26, -24, 26, -14);
+      g.arc(0, -14, 26, 0, Math.PI);
+      g.bezierCurveTo(-26, -24, -20, -40, 0, -70);
       g.fill();
       break;
   }
