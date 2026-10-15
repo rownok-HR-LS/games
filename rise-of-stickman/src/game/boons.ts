@@ -19,22 +19,22 @@ const RARITY_ORDER: Rarity[] = ["common", "rare", "epic", "heroic"];
 export const LEVEL_STEP = 0.3;
 
 export const BLESSINGS: Blessing[] = [
-  { id: "fire_blade", element: "fire", slot: "blade", name: "Infernal Edge", text: "Katana hits set enemies ablaze: 24 damage over 3 seconds." },
+  { id: "fire_blade", element: "fire", slot: "blade", name: "Infernal Edge", text: "Weapon hits set enemies ablaze: 24 damage over 3 seconds." },
   { id: "fire_guns", element: "fire", slot: "guns", name: "Hellfire Rounds", text: "Bullets explode on impact, scorching everything nearby for 7 damage." },
   { id: "fire_dash", element: "fire", slot: "dash", name: "Ember Wake", text: "Your shadow dash leaves a trail of fire that burns enemies who touch it." },
   { id: "fire_aux", element: "fire", slot: "aux", name: "Pyre of Wrath", text: "Wrath form burns everything within 3 m every half second." },
 
-  { id: "ice_blade", element: "ice", slot: "blade", name: "Frostbite Edge", text: "Katana hits chill. Five chills freeze an enemy; frozen enemies shatter when killed." },
+  { id: "ice_blade", element: "ice", slot: "blade", name: "Frostbite Edge", text: "Weapon hits chill. Five chills freeze an enemy; frozen enemies shatter when killed." },
   { id: "ice_guns", element: "ice", slot: "guns", name: "Glacial Rounds", text: "Bullets chill. Chilled enemies move and attack 35% slower." },
   { id: "ice_dash", element: "ice", slot: "dash", name: "Frost Step", text: "Enemies you dash through are frozen solid for 1.5 seconds." },
   { id: "ice_aux", element: "ice", slot: "aux", name: "Cold Judgement", text: "A perfect parry releases a freezing nova around you." },
 
-  { id: "lightning_blade", element: "lightning", slot: "blade", name: "Storm Edge", text: "Katana hits arc lightning to 2 nearby enemies for 9 damage." },
+  { id: "lightning_blade", element: "lightning", slot: "blade", name: "Storm Edge", text: "Weapon hits arc lightning to 2 nearby enemies for 9 damage." },
   { id: "lightning_guns", element: "lightning", slot: "guns", name: "Thunder Rounds", text: "Every 4th shot is a lightning bolt that pierces all enemies in its path." },
   { id: "lightning_dash", element: "lightning", slot: "dash", name: "Static Rush", text: "Your dash zaps every enemy you pass through for 14 damage." },
   { id: "lightning_aux", element: "lightning", slot: "aux", name: "Wrath of Heaven", text: "In Wrath form, lightning strikes a nearby enemy every 0.4 seconds." },
 
-  { id: "shadow_blade", element: "shadow", slot: "blade", name: "Night Edge", text: "25% chance for a katana hit to deal double damage as a shadow strike." },
+  { id: "shadow_blade", element: "shadow", slot: "blade", name: "Night Edge", text: "25% chance for a weapon hit to deal double damage as a shadow strike." },
   { id: "shadow_guns", element: "shadow", slot: "guns", name: "Phantom Rounds", text: "Bullets pass through enemies and hit everything in a line." },
   { id: "shadow_dash", element: "shadow", slot: "dash", name: "Ink Clone", text: "Dashing leaves an ink clone that explodes after a moment for 22 damage." },
   { id: "shadow_aux", element: "shadow", slot: "aux", name: "Soul Harvest", text: "Every kill heals you for 2." },
@@ -64,7 +64,7 @@ export const ELEMENT_COLOR: Record<Element, string> = {
 };
 
 // ── Rooms and rewards ─────────────────────────────────────────────────────────────────
-export type RoomType = "combat" | "elite" | "abyss" | "shop" | "fountain" | "miniboss" | "boss";
+export type RoomType = "combat" | "elite" | "abyss" | "shop" | "fountain" | "miniboss" | "boss" | "armoury";
 
 export type Reward =
   | { kind: "blessing"; element: Element; minRarity?: Rarity }

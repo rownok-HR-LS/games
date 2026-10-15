@@ -30,7 +30,8 @@ import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js
 import type { Creature } from "./creatures";
 import { DEFS, ELITE_COLOR, Enemy, Hex, type EliteMod, type EnemyKind, type ShotStyle } from "./enemies";
 import { Butcher } from "./miniboss";
-import { itemIcon as shopIcon, itemName, MERCHANT_LINES, pick, Fountain, Shop, type ShopItem } from "./special";
+import { itemIcon as shopIcon, itemName, MERCHANT_LINES, pick, Armoury, Fountain, Shop, type ShopItem } from "./special";
+import { WEAPONS, type WeaponId } from "./weapons";
 import { Fx } from "./fx";
 import { LordApparition, LORDS } from "./lords";
 import { Hud } from "./hud";
@@ -99,6 +100,7 @@ export class Game {
   enemies: Enemy[] = [];
   boss: Boss | Butcher | null = null;
   private shop: Shop | null = null;
+  private armoury: Armoury | null = null;
   private fountain: Fountain | null = null;
   private hexes: Hex[] = [];
   private debris: Debris[] = [];
@@ -257,7 +259,8 @@ export class Game {
     this.runTime = 0;
     this.shopSeen = false;
     this.hud.boons(this.loadout);
-    this.buildRoom(1, { type: "combat", reward: { kind: "blessing", element: ELEMENTS[(Math.random() * 4) | 0] } });
+    this.player.setWeapon(savedWeapon());
+    this.buildRoom(0, { type: "armoury", reward: null });
     this.paused = false;
     this.running = true;
     this.audio.unlock();
@@ -289,6 +292,8 @@ export class Game {
     this.removeLord();
     if (this.shop) this.scene.remove(this.shop.group);
     if (this.fountain) this.scene.remove(this.fountain.group);
+    if (this.armoury) this.scene.remove(this.armoury.group);
+    this.armoury = null;
     this.shop = null;
     this.fountain = null;
     this.hud.prompt(null);
@@ -307,11 +312,11 @@ export class Game {
     this.plan = plan;
     const type = plan.type;
     const fight = type === "combat" || type === "elite" || type === "abyss";
-    const visit = type === "shop" || type === "fountain";
+    const visit = type === "shop" || type === "fountain" || type === "armoury";
     // Deeper = tougher.
     this.hpScale = type === "boss" ? 1.3 : 1 + 0.07 * (no - 1);
     this.dmgScale = type === "boss" ? 1.15 : 1 + 0.045 * (no - 1);
-    const doors = type === "boss" ? 0 : no === FLOOR_ROOMS - 1 || no === MINIBOSS_ROOM - 1 ? 1 : no === FLOOR_ROOMS - 2 ? 2 : no >= 3 ? 3 : 2;
+    const doors = type === "boss" ? 0 : type === "armoury" ? 1 : no === FLOOR_ROOMS - 1 || no === MINIBOSS_ROOM - 1 ? 1 : no === FLOOR_ROOMS - 2 ? 2 : no >= 3 ? 3 : 2;
     const traps = fight && no >= 2 ? Math.min(5, 2 + Math.floor(no / 3)) : type === "miniboss" ? 3 : 0;
     this.room = new Room(no * 31 + Math.floor(Math.random() * 1000), { boss: type === "boss", doors, traps, small: visit });
     this.scene.add(this.room.group);
@@ -348,9 +353,14 @@ export class Game {
       this.fountain = new Fountain();
       this.scene.add(this.fountain.group);
     }
+    if (type === "armoury") {
+      this.armoury = new Armoury();
+      this.scene.add(this.armoury.group);
+      this.hud.say("The Armoury", "Choose your weapon. Walk to a rack and press F.");
+    }
     if (visit) this.openDoors();
-    const names: Record<DoorPlan["type"], string> = { combat: "", elite: " · Elite", abyss: " · Abyss", shop: " · Merchant", fountain: " · Fountain", miniboss: " · The Butcher", boss: " · Warden" };
-    this.hud.room(`Bone Pits · ${type === "boss" ? "Warden" : `Chamber ${no}/${FLOOR_ROOMS - 1}`}${type === "boss" ? "" : names[type]}`);
+    const names: Record<DoorPlan["type"], string> = { combat: "", elite: " · Elite", abyss: " · Abyss", shop: " · Merchant", fountain: " · Fountain", miniboss: " · The Butcher", boss: " · Warden", armoury: "" };
+    this.hud.room(`Bone Pits · ${type === "boss" ? "Warden" : type === "armoury" ? "Armoury" : `Chamber ${no}/${FLOOR_ROOMS - 1}`}${type === "boss" ? "" : names[type]}`);
     this.hud.boss(null, 0);
     this.updateCamera(1);
   }
@@ -584,7 +594,7 @@ export class Game {
         text: b.text,
         icon: b.element as IconKind,
         color: ELEMENT_COLOR[b.element],
-        tag: `${rarity[0].toUpperCase()}${rarity.slice(1)} · ${b.slot === "aux" ? "Passive" : b.slot[0].toUpperCase() + b.slot.slice(1)} · ${Math.round(RARITY_MULT[rarity] * 100)}% power`,
+        tag: `${rarity[0].toUpperCase()}${rarity.slice(1)} · ${b.slot === "aux" ? "Passive" : b.slot === "blade" ? "Weapon" : b.slot[0].toUpperCase() + b.slot.slice(1)} · ${Math.round(RARITY_MULT[rarity] * 100)}% power`,
         rarity: RARITY_COLOR[rarity],
         note: owned ? `Replaces ${owned.name}` : undefined,
       };
@@ -733,6 +743,12 @@ export class Game {
         act = () => this.buy(i);
       });
     }
+    if (this.armoury)
+      for (const r of this.armoury.racks) {
+        if (r.id === this.player.w.id || Math.hypot(p.x - r.pos.x, p.z - r.pos.z) > 1.8) continue;
+        prompt = `Take the ${WEAPONS[r.id].name}`;
+        act = () => this.equip(r.id);
+      }
     if (this.fountain && !this.fountain.used && Math.hypot(p.x - this.fountain.pos.x, p.z - this.fountain.pos.z) < 3) {
       prompt = "Drink from the Blood Fountain (heal 40%)";
       act = () => {
@@ -743,6 +759,20 @@ export class Game {
     }
     this.hud.prompt(prompt);
     if (act && this.input.pressed.has("interact")) (act as () => void)();
+  }
+
+  private equip(id: WeaponId) {
+    this.player.setWeapon(id);
+    try {
+      localStorage.setItem("ros.weapon", id);
+    } catch {
+      /* storage unavailable */
+    }
+    const w = WEAPONS[id];
+    this.audio.buy();
+    this.fx.ring(this.player.pos, 0.2, 1.8, w.trail.clone().multiplyScalar(2), 0.4);
+    this.hud.toast(w.name.toUpperCase(), `#${w.trail.clone().multiplyScalar(1.8).getHexString()}`);
+    this.hud.say(w.name, w.blurb);
   }
 
   private buy(i: number) {
@@ -780,6 +810,7 @@ export class Game {
     if (!doors.length) return;
     this.audio.door();
     const next = this.roomNo + 1;
+    if (this.roomNo === 0) return this.room.openDoor(doors[0], { type: "combat", reward: { kind: "blessing", element: ELEMENTS[(Math.random() * 4) | 0] } });
     if (next === FLOOR_ROOMS) return this.room.openDoor(doors[0], { type: "boss", reward: null });
     if (next === MINIBOSS_ROOM) return this.room.openDoor(doors[0], { type: "miniboss", reward: { kind: "move" } });
     if (next === FLOOR_ROOMS - 1) {
@@ -877,7 +908,7 @@ export class Game {
       if (h.kind !== "element") this.fx.bleed(at, h.dir.x, h.dir.z, h.kind === "gun" ? 0.4 : amount);
       if (h.kind === "blade" || h.kind === "special" || h.kind === "execute" || h.kind === "splitter") {
         this.fx.flash(at, new THREE.Color(0.8, 0.75, 0.7), h.heavy ? 0.45 : 0.28, 0.05);
-        this.audio.cut(!!h.heavy);
+        this.audio.cut(!!h.heavy, this.player.w.sound);
         this.hitstop(h.heavy ? 0.075 : 0.04);
         this.shake(h.heavy ? 0.22 : 0.09);
       } else if (h.kind === "gun") this.audio.bulletHit();
@@ -1565,6 +1596,12 @@ export class Game {
       const kind = rewardIcon(this.plan.reward);
       place(this.orb.position.clone().setY(3.1), { icon: kind, title: rewardLabel(this.plan.reward), sub: "Walk over to claim", color: ICON_COLOR[kind] }, true);
     }
+    if (this.armoury)
+      for (const r of this.armoury.racks) {
+        const w = WEAPONS[r.id];
+        const on = r.id === this.player.w.id;
+        place(r.pos.clone().setY(3.2), { icon: "move", title: w.name, sub: on ? "Equipped" : "Press F to take", color: on ? "#ffd24a" : `#${w.trail.clone().multiplyScalar(2.2).getHexString()}` }, false);
+      }
     if (this.shop)
       for (const it of this.shop.items) {
         if (it.sold) continue;
@@ -1618,6 +1655,7 @@ export class Game {
     if (this.phase === "fight" || this.phase === "killcam") this.room.updateTraps(dt, this);
     this.shop?.update(dt, this.fx);
     this.fountain?.update(dt, this.fx);
+    this.armoury?.update(dt, this.player.w.id);
     this.updateLord(real);
     this.fx.update(dt);
     this.updateFlow(dt, real);
@@ -1634,3 +1672,14 @@ export class Game {
   }
 }
 
+
+/** Last weapon the player took from the armoury. */
+function savedWeapon(): WeaponId {
+  try {
+    const v = localStorage.getItem("ros.weapon");
+    if (v && v in WEAPONS) return v as WeaponId;
+  } catch {
+    /* storage unavailable */
+  }
+  return "katana";
+}

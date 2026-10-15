@@ -215,6 +215,18 @@ export type SlashDef = {
   spin?: number;
   keys: Key[];
   fx: SlashFx;
+  /** Second arc drawn with the first (crossing cuts). */
+  fx2?: SlashFx;
+  /** Draw the arc on every hit of a multi-hit move, not just the first. */
+  repeatFx?: boolean;
+  /** How the move looks and hits: arc (blade swing), punch, slam (ground shockwave), chain/lash (glaive disc on its chain), throw (glaive ricochet). */
+  style?: "arc" | "punch" | "slam" | "chain" | "lash" | "throw";
+  /** Fist that lands the punch. */
+  hand?: "R" | "L";
+  /** Damage multiplier against airborne (juggled) enemies. */
+  airBonus?: number;
+  /** Keep moving forward at this speed for the whole move (steerable). */
+  travel?: number;
 };
 
 const S1A: Pose = {

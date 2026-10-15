@@ -145,9 +145,31 @@ export class Audio {
     this.nz(t + 0.02, 0.12, 0.18, "highpass", 6000, 9000, 0.7);
   }
 
-  cut(heavy = false) {
+  /** Gauntlet swing: a short whoosh. */
+  punch(heavy = false) {
+    if (!this.ok()) return;
+    const t = this.now();
+    this.nz(t, heavy ? 0.22 : 0.12, heavy ? 0.4 : 0.28, "bandpass", 700, 2400, 1.1);
+  }
+
+  /** Glaive: chain rattle and whip. */
+  chainWhip(heavy = false) {
+    if (!this.ok()) return;
+    const t = this.now();
+    for (let i = 0; i < 4; i++) this.nz(t + i * 0.03, 0.05, 0.12, "bandpass", 4200 - i * 400, 3000, 4);
+    this.nz(t + 0.08, heavy ? 0.25 : 0.16, 0.3, "bandpass", 1800, 5200, 1.4);
+  }
+
+  cut(heavy = false, kind: "blade" | "punch" | "chain" = "blade") {
     if (!this.ok() || !this.gate("cut", 35)) return;
     const t = this.now();
+    if (kind === "punch") {
+      // Meaty thud.
+      this.tone(t, "sine", heavy ? 95 : 140, 40, 0.18, heavy ? 0.9 : 0.6);
+      this.nz(t, 0.08, 0.5, "lowpass", 900, 200, 0.8);
+      return;
+    }
+    if (kind === "chain") this.tone(t, "triangle", 2200, 1700, 0.08, 0.12);
     this.nz(t, 0.09, 0.6, "lowpass", 2400, 300, 0.8);
     this.tone(t, "sine", heavy ? 120 : 180, 45, 0.16, heavy ? 0.7 : 0.45);
     this.nz(t + 0.01, 0.25, 0.22, "bandpass", 900, 400, 2); // wet splatter

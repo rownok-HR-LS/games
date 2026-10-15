@@ -5,7 +5,6 @@ import {
   AIM,
   AIM_UPPER,
   CHARGE,
-  COMBO,
   DASH,
   EXECUTE_KEYS,
   GAIT_HERO,
@@ -13,17 +12,16 @@ import {
   IDLE,
   PARRY,
   RELOAD_UPPER,
-  RIFT,
-  RUN_UPPER,
-  SPECIAL,
   SPLITTER_KEYS,
   WRATH_ROAR,
   gait,
   type SlashDef,
+  type SlashFx,
 } from "./anims";
+import { WEAPONS, type WeaponDef, type WeaponId } from "./weapons";
 import type { Element } from "./boons";
 import type { Game } from "./game";
-import { Ghost, HeroModel } from "./hero";
+import { Ghost, GlaiveChain, HeroModel } from "./hero";
 import { addPose, sampleClip, type Pose } from "./rig";
 import type { AttackOpts, AttackResult, Target } from "./types";
 
@@ -94,7 +92,17 @@ export class Player {
   private gunSpin = 0;
   private barrageT = 0;
   specialCd = 0;
-  readonly specialMax = 7;
+  get specialMax() {
+    return this.w.specialCd;
+  }
+  /** Equipped melee weapon. */
+  w: WeaponDef = WEAPONS.katana;
+  private chain: GlaiveChain;
+  /** Arc of the current glaive swing (for the disc on its chain). */
+  private arcFrame: { c: THREE.Vector3; x: THREE.Vector3; z: THREE.Vector3; sweep: number; radius: number } | null = null;
+  /** The thrown glaive (special): flies between enemies, then back to the hand. */
+  private thrown: { pos: THREE.Vector3; target: Target | null; aim: THREE.Vector3; hit: Set<number>; left: number; back: boolean; t: number } | null = null;
+  private discSpin = 0;
   private parryLen = 0.2;
   private execTarget: Target | null = null;
   private execFrom = new THREE.Vector3();
@@ -118,6 +126,8 @@ export class Player {
     // Soft warm light that follows the hero so he reads against the dark floor.
     this.glow = new THREE.PointLight(0xffb48a, 9, 7, 1.6);
     game.scene.add(this.glow);
+    this.chain = new GlaiveChain(new THREE.Color(0.6, 0.7, 1));
+    game.scene.add(this.chain.group);
     for (let i = 0; i < 14; i++) {
       const g = new Ghost(this.model.rig);
       this.ghosts.push(g);
@@ -127,6 +137,15 @@ export class Player {
 
   get rig() {
     return this.model.rig;
+  }
+
+  setWeapon(id: WeaponId) {
+    this.w = WEAPONS[id];
+    this.model.setMelee(id);
+    this.combo = 0;
+    this.thrown = null;
+    this.model.setGlaiveOut(false);
+    this.chain.hide();
   }
   get alive() {
     return this.state !== "dead";
@@ -271,7 +290,8 @@ export class Player {
     for (const gh of this.ghosts) gh.update(dt);
     // Blade glow during attacks.
     const attacking = this.state === "slash" || this.state === "execute";
-    this.model.katana.bladeMat.emissiveIntensity = attacking ? 1.6 : this.inWrath ? 1.2 : 0.25;
+    this.model.setGlow(attacking ? 1.6 : this.inWrath ? 1.2 : 0.25);
+    this.updateGlaive(dt);
   }
 
   private enter(s: State) {
@@ -356,11 +376,14 @@ export class Player {
     if (input.pressed.has("wrath") && this.wrath >= 100 && !this.inWrath) return this.startWrath();
     if (input.pressed.has("dash") && this.dashCharges > 0) return this.startDash();
     if (input.pressed.has("parry")) return this.startParry();
-    if (input.pressed.has("special") && this.specialCd <= 0) return this.startSlash(SPECIAL);
-    if (input.pressed.has("attack")) {
-      if (this.time - this.lastDashEnd < 0.22) return this.startSlash(RIFT);
-      const next = this.sinceSlash < 0.5 ? (this.combo + 1) % COMBO.length : 0;
-      return this.startSlash(COMBO[next], next);
+    if (this.thrown) {
+      if (input.pressed.has("attack")) this.thrown.back = true;
+    } else if (input.pressed.has("special") && this.specialCd <= 0) return this.startSlash(this.w.special);
+
+    if (input.pressed.has("attack") && !this.thrown) {
+      if (this.time - this.lastDashEnd < 0.22) return this.startSlash(this.w.dash);
+      const next = this.sinceSlash < 0.5 ? (this.combo + 1) % this.w.combo.length : 0;
+      return this.startSlash(this.w.combo[next], next);
     }
     if (input.held.has("attack") && g.loadout.moves.has("splitter") && this.sinceSlash < 0.6 && this.sinceSlash > 0.05) {
       if (performance.now() - input.attackDownAt > 380) return this.enter("charge");
@@ -378,10 +401,10 @@ export class Player {
       pose = k01 > 0.1 ? { ...gait(this.phase, k01 * 0.8, { ...GAIT_HERO, lean: 0.15 }), ...upper } : { ...AIM, ...upper };
       pose = addPose(pose, { armR: [this.recoil[0], 0, 0], armL: [this.recoil[1], 0, 0] });
     } else if (k01 > 0.12) {
-      pose = { ...gait(this.phase, k01, GAIT_HERO), ...RUN_UPPER };
+      pose = { ...gait(this.phase, k01, GAIT_HERO), ...this.w.runUpper };
     } else {
       const b = Math.sin(this.time * 2.2) * 0.04;
-      pose = addPose(IDLE, { spine: [b, 0, 0], armL: [b * 2, 0, 0], y: b * 0.3 });
+      pose = addPose(this.w.idle, { spine: [b, 0, 0], armL: [b * 2, 0, 0], y: b * 0.3 });
     }
     this.rig.setPose(pose);
   }
@@ -389,7 +412,7 @@ export class Player {
   private startSlash(def: SlashDef, comboIdx = -1) {
     const g = this.game;
     if (comboIdx >= 0) this.combo = comboIdx;
-    if (def === SPECIAL) {
+    if (def === this.w.special) {
       this.specialCd = this.specialMax;
       g.audio.special();
     }
@@ -400,7 +423,7 @@ export class Player {
     this.gunModeT = 0;
     this.spin = 0;
     this.enter("slash");
-    if (def !== RIFT) this.meleeAssist();
+    if (def !== this.w.dash) this.meleeAssist();
     else {
       // Rift Cut goes the way you were dashing (or aiming).
       this.yaw = this.dashDir.lengthSq() > 0 ? Math.atan2(this.dashDir.x, this.dashDir.z) : this.aimYaw();
@@ -408,6 +431,17 @@ export class Player {
     }
     this.vel.set(0, 0, 0);
     this.rig.setPose(def.keys[0].pose);
+    this.arcFrame = def.style === "chain" ? this.frameOf(def.fx) : null;
+  }
+
+  /** Centre and basis of a swing arc (same maths as fx.slash). */
+  private frameOf(f: SlashFx) {
+    const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    const n = new THREE.Vector3(0, 1, 0).applyAxisAngle(fwd, f.roll);
+    if (f.left) n.negate();
+    const x = fwd.clone().applyAxisAngle(n, f.sweep >= Math.PI * 1.9 ? 0 : f.sweep / 2 + (f.offset ?? 0)).normalize();
+    const z = new THREE.Vector3().crossVectors(x, n).normalize();
+    return { c: new THREE.Vector3(this.pos.x, f.height, this.pos.z), x, z, sweep: f.sweep, radius: f.radius * (this.inWrath ? 1.3 : 1) };
   }
 
   private stSlash(dt: number) {
@@ -418,11 +452,14 @@ export class Player {
     const t = this.st * speedMul;
     this.rig.setPose(sampleClip(def.keys, t));
     // Lunge forward during the strike.
-    const lungeT = def === RIFT ? 0.14 : 0.16;
+    const lungeT = def === this.w.dash ? 0.14 : 0.16;
     const fx = Math.sin(this.yaw);
     const fz = Math.cos(this.yaw);
-    if (t < lungeT) {
-      const sp = (def.lunge / lungeT) * (def === RIFT ? 1 : 1.6 * (1 - t / lungeT));
+    if (def.travel) {
+      if (this.moveDir.lengthSq() > 0.01) this.turnTo(Math.atan2(this.moveDir.x, this.moveDir.z), dt, 5);
+      this.vel.set(Math.sin(this.yaw) * def.travel, 0, Math.cos(this.yaw) * def.travel);
+    } else if (t < lungeT) {
+      const sp = (def.lunge / lungeT) * (def === this.w.dash ? 1 : 1.6 * (1 - t / lungeT));
       this.vel.set(fx * sp, 0, fz * sp);
     } else this.friction(dt, 24);
     if (def.spin) {
@@ -430,13 +467,13 @@ export class Player {
       this.spin = def.spin * (1 - (1 - u) * (1 - u));
     }
     // Rift Cut: hit everything we pass through.
-    if (def === RIFT) {
+    if (def === this.w.dash && def.style !== "lash") {
       if (this.st < 0.02) {
-        g.audio.slash(true);
+        this.swingSound(def);
         v1.set(this.pos.x, 1.1, this.pos.z);
         v2.set(this.pos.x + fx * def.lunge, 1.1, this.pos.z + fz * def.lunge);
         g.fx.beam(v1, v2, this.slashColor(), 0.06, 0.25);
-        this.arc(def.fx);
+        this.moveFx(def);
       }
       if (t < lungeT + 0.03) this.hitAround(def, 1.5, true);
     } else {
@@ -444,12 +481,13 @@ export class Player {
       while (this.hitsDone < n) {
         const at = def.hitAt + (n > 1 ? ((def.span ?? 0) * this.hitsDone) / (n - 1) : 0);
         if (t < at) break;
-        if (this.hitsDone === 0) {
-          g.audio.slash(!!def.heavy);
-          this.arc(def.fx);
+        if (this.hitsDone === 0 || def.repeatFx) {
+          if (this.hitsDone === 0) this.swingSound(def);
+          this.moveFx(def);
         }
         if (this.hitsDone > 0) this.hitIds.clear();
-        this.hitAround(def, def.range, false);
+        if (def.style === "throw") this.throwDisc();
+        else this.hitAround(def, def.range, false);
         this.hitsDone++;
       }
     }
@@ -457,19 +495,19 @@ export class Player {
     // Cancels.
     if (t >= def.cancelAt * 0.6 && input.pressed.has("dash") && this.dashCharges > 0) return this.startDash();
     if (t >= def.hitAt && input.pressed.has("parry")) return this.startParry();
-    if (this.buffered && t >= def.cancelAt && COMBO.includes(def) && def !== COMBO[COMBO.length - 1]) {
-      const next = COMBO.indexOf(def) + 1;
+    if (this.buffered && t >= def.cancelAt && this.w.combo.includes(def) && def !== this.w.combo[this.w.combo.length - 1]) {
+      const next = this.w.combo.indexOf(def) + 1;
       this.sinceSlash = 0;
-      return this.startSlash(COMBO[next], next);
+      return this.startSlash(this.w.combo[next], next);
     }
     if (t >= def.dur) {
-      this.sinceSlash = this.buffered && def === COMBO[COMBO.length - 1] ? 9 : 0;
-      if (def === COMBO[COMBO.length - 1] || def === SPECIAL || def === RIFT) this.combo = COMBO.length - 1; // next press restarts at 0
+      this.sinceSlash = this.buffered && def === this.w.combo[this.w.combo.length - 1] ? 9 : 0;
+      if (def === this.w.combo[this.w.combo.length - 1] || def === this.w.special || def === this.w.dash) this.combo = this.w.combo.length - 1; // next press restarts at 0
       this.spin = 0;
       this.enter("move");
-      if (this.buffered && (def === COMBO[COMBO.length - 1] || def === RIFT || def === SPECIAL)) {
+      if (this.buffered && (def === this.w.combo[this.w.combo.length - 1] || def === this.w.dash || def === this.w.special)) {
         this.sinceSlash = 9;
-        this.startSlash(COMBO[0], 0);
+        this.startSlash(this.w.combo[0], 0);
       }
     }
   }
@@ -478,7 +516,170 @@ export class Player {
     if (this.inWrath) return new THREE.Color(1.5, 0.35, 0.06);
     const el = this.game.loadout.slots.blade?.element;
     if (el) return ELEMENT_RGB[el].clone().multiplyScalar(0.32);
-    return new THREE.Color(0.38, 0.45, 0.7);
+    return this.w.trail.clone();
+  }
+
+  private swingSound(def: SlashDef) {
+    const g = this.game;
+    if (this.w.sound === "punch") g.audio.punch(!!def.heavy);
+    else if (this.w.sound === "chain") g.audio.chainWhip(!!def.heavy);
+    else g.audio.slash(!!def.heavy);
+  }
+
+  /** What a move looks like when it lands. */
+  private moveFx(def: SlashDef) {
+    const g = this.game;
+    const col = this.slashColor();
+    switch (def.style) {
+      case "slam": {
+        const at = v1.set(this.pos.x + Math.sin(this.yaw) * 0.7, 0.05, this.pos.z + Math.cos(this.yaw) * 0.7);
+        g.fx.ring(at, 0.3, def.range + 0.4, new THREE.Color(1.3, 0.55, 0.15), 0.4);
+        g.fx.smoke(at, new THREE.Color(0.12, 0.09, 0.07), 10, 1.0, 0.5);
+        g.fx.sparks(v2.set(at.x, 0.3, at.z), new THREE.Color(1.6, 0.7, 0.2), 16, 6);
+        g.fx.decal(at.x, at.z, def.range * 0.6, new THREE.Color(0.04, 0.03, 0.025));
+        g.audio.boom(def.dmg > 30 ? 1.2 : 0.8);
+        g.shake(def.dmg > 30 ? 0.4 : 0.25);
+        return;
+      }
+      case "punch": {
+        this.arc(def.fx);
+        this.rig.root.updateMatrixWorld(true);
+        const fist = this.rig.worldOf(def.hand === "L" ? "handL" : "handR", v1, v2.set(0, -0.12, 0));
+        g.fx.ring(fist, 0.05, 0.7, new THREE.Color(1.2, 0.6, 0.2), 0.15);
+        return;
+      }
+      case "lash": {
+        this.rig.root.updateMatrixWorld(true);
+        const hand = this.rig.worldOf("handR", v1);
+        const end = v2.set(this.pos.x + Math.sin(this.yaw) * def.range, 1.1, this.pos.z + Math.cos(this.yaw) * def.range);
+        g.fx.beam(hand, end, col, 0.04, 0.18);
+        return;
+      }
+      case "throw":
+        return;
+      default:
+        this.arc(def.fx);
+        if (def.fx2) this.arc(def.fx2);
+    }
+  }
+
+  // ── Glaive ─────────────────────────────────────────────────────────────────────────
+  private throwDisc() {
+    const g = this.game;
+    this.rig.root.updateMatrixWorld(true);
+    const from = this.rig.worldOf("handR", new THREE.Vector3());
+    const aim = new THREE.Vector3(this.pos.x + Math.sin(this.yaw) * 9, 1.1, this.pos.z + Math.cos(this.yaw) * 9);
+    this.thrown = { pos: from, target: this.nextDiscTarget(from, new Set(), 13, true), aim, hit: new Set(), left: 5, back: false, t: 0 };
+    this.model.setGlaiveOut(true);
+    g.audio.chainWhip(true);
+  }
+
+  private nextDiscTarget(from: THREE.Vector3, hit: Set<number>, range: number, ahead = false) {
+    let best: Target | null = null;
+    let bd = range;
+    for (const t of this.game.targets()) {
+      if (hit.has(t.id)) continue;
+      const d = Math.hypot(t.pos.x - from.x, t.pos.z - from.z);
+      if (ahead && Math.abs(angDiff(Math.atan2(t.pos.x - this.pos.x, t.pos.z - this.pos.z), this.yaw)) > 1.0) continue;
+      if (d < bd) {
+        bd = d;
+        best = t;
+      }
+    }
+    return best;
+  }
+
+  /** Glaive disc and chain: thrown, mid-swing, or resting in the hand. */
+  private updateGlaive(dt: number) {
+    if (this.w.id !== "glaive") {
+      this.chain.hide();
+      return;
+    }
+    const g = this.game;
+    this.discSpin += dt * 28;
+    this.rig.root.updateMatrixWorld(true);
+    const hand = this.rig.worldOf("handR", v1, v2.set(0, -0.15, 0)).clone();
+    const th = this.thrown;
+    if (th) {
+      th.t += dt;
+      if (th.t > 3) th.back = true;
+      if (!th.back && th.target && !th.target.alive) th.target = this.nextDiscTarget(th.pos, th.hit, 9);
+      const dest = th.back ? hand : th.target ? v2.set(th.target.pos.x, th.target.chest + th.target.air, th.target.pos.z) : th.aim;
+      const d = th.pos.distanceTo(dest);
+      const step = (th.back ? 30 : 26) * dt;
+      th.pos.addScaledVector(v1.subVectors(dest, th.pos).normalize(), Math.min(d, step));
+      if (Math.random() < dt * 40) g.fx.sparks(th.pos, this.slashColor(), 1, 2);
+      if (th.back) {
+        // Cuts on the way home too.
+        for (const t of g.targets())
+          if (!th.hit.has(t.id) && Math.hypot(t.pos.x - th.pos.x, t.pos.z - th.pos.z) < t.radius + 0.5) {
+            th.hit.add(t.id);
+            this.discHit(t, th.pos);
+          }
+        if (th.pos.distanceTo(hand) < 0.6) {
+          this.thrown = null;
+          this.model.setGlaiveOut(false);
+          this.chain.hide();
+          g.audio.reload();
+          return;
+        }
+      } else if (d < 0.5 + (th.target ? th.target.radius : 0)) {
+        if (th.target) {
+          th.hit.add(th.target.id);
+          this.discHit(th.target, th.pos);
+          th.left--;
+          th.target = th.left > 0 ? this.nextDiscTarget(th.pos, th.hit, 9) : null;
+          if (!th.target) th.back = true;
+        } else th.back = true;
+      }
+      this.chain.show(hand, th.pos, this.discSpin);
+      return;
+    }
+    const def = this.slashDef;
+    if (this.state === "slash" && def && (def.style === "chain" || def.style === "lash")) {
+      const t = this.st;
+      const out = Math.max(0.02, def.hitAt - 0.07);
+      const ret = def.hitAt + 0.08;
+      let at: THREE.Vector3;
+      if (def.style === "lash") {
+        const reach = def.range * (this.inWrath ? 1.3 : 1);
+        const k = t < def.hitAt ? t / def.hitAt : Math.max(0, 1 - (t - def.hitAt) / Math.max(0.05, def.dur * 0.7 - def.hitAt));
+        const tip = v2.set(this.pos.x + Math.sin(this.yaw) * reach, 1.1, this.pos.z + Math.cos(this.yaw) * reach);
+        at = hand.clone().lerp(tip, k);
+      } else if (this.arcFrame) {
+        const f = this.arcFrame;
+        const P = (u: number) => {
+          const th2 = u * f.sweep;
+          return new THREE.Vector3().copy(f.x).multiplyScalar(Math.cos(th2) * f.radius).addScaledVector(f.z, Math.sin(th2) * f.radius).add(f.c);
+        };
+        if (t < out) at = hand.clone().lerp(P(0), t / out);
+        else if (t < ret) at = P((t - out) / (ret - out));
+        else at = P(1).lerp(hand, Math.min(1, (t - ret) / Math.max(0.05, def.dur * 0.8 - ret)));
+      } else at = hand;
+      if (at.distanceTo(hand) > 0.3) {
+        this.model.setGlaiveOut(true);
+        this.chain.show(hand, at, this.discSpin);
+        return;
+      }
+    }
+    this.model.setGlaiveOut(false);
+    this.chain.hide();
+  }
+
+  private discHit(t: Target, at: THREE.Vector3) {
+    const g = this.game;
+    const dir = new THREE.Vector3(t.pos.x - this.pos.x, 0, t.pos.z - this.pos.z).normalize();
+    g.damage(t, {
+      dmg: this.w.special.dmg * g.mods.dmg * (this.inWrath ? 1.8 : 1),
+      dir,
+      kind: "special",
+      move: "ricochet",
+      knock: this.w.special.knock,
+      heavy: true,
+      element: this.inWrath ? "fire" : g.loadout.slots.blade?.element ?? null,
+      at: at.clone(),
+    });
+    g.fx.sparks(at, this.slashColor(), 10, 5);
   }
 
   private arc(f: SlashDef["fx"]) {
@@ -511,17 +712,18 @@ export class Player {
       const dir = d > 0.01 ? new THREE.Vector3(dx / d, 0, dz / d) : new THREE.Vector3(fx, 0, fz);
       if (def.cone >= Math.PI && !path) dir.lerp(new THREE.Vector3(fx, 0, fz), 0.2).normalize();
       let dmg = def.dmg * mods.dmg * (this.inWrath ? 1.8 : 1);
+      if (def.airBonus && t.air > 0.3) dmg *= def.airBonus;
       let crit = false;
       if (Math.random() < 0.18 * g.loadout.power("shadow_blade")) {
         dmg *= 2;
         crit = true;
       }
       const execute =
-        def === COMBO[COMBO.length - 1] && g.loadout.moves.has("executioner") && !t.isBoss && t.hp < t.maxHp * 0.3;
+        def === this.w.combo[this.w.combo.length - 1] && g.loadout.moves.has("executioner") && !t.isBoss && t.hp < t.maxHp * 0.3;
       g.damage(t, {
         dmg,
         dir,
-        kind: def === SPECIAL ? "special" : "blade",
+        kind: def === this.w.special ? "special" : "blade",
         move: def.id,
         knock: def.knock,
         launch: def.launch,
@@ -574,9 +776,9 @@ export class Player {
       }
     }
     if (g.loadout.has("fire_dash") && Math.random() < dt * 40) g.firePatch(this.pos.clone());
-    if (g.input.pressed.has("attack")) {
+    if (g.input.pressed.has("attack") && !this.thrown) {
       this.lastDashEnd = this.time;
-      return this.startSlash(RIFT);
+      return this.startSlash(this.w.dash);
     }
     if (this.st >= DUR) {
       this.lastDashEnd = this.time;

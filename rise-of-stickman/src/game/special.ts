@@ -2,6 +2,8 @@
 // Coins) and the Blood Fountain (heals once).
 import * as THREE from "three";
 import { Creature } from "./creatures";
+import { gauntletMesh, glaiveDiscMesh, katanaMesh, scytheMesh } from "./hero";
+import { WEAPON_ORDER, WEAPONS, type WeaponId } from "./weapons";
 import { ELEMENT_COLOR, type Element } from "./boons";
 import { glowTexture, iconTexture, ICON_COLOR, type IconKind } from "./textures";
 
@@ -252,6 +254,104 @@ export class Fountain {
         gravity: 9,
         drag: 0.3,
       });
+    }
+  }
+}
+
+/** The armoury at the start of a run: the four weapons on stone plinths. */
+export class Armoury {
+  readonly group = new THREE.Group();
+  readonly racks: { id: WeaponId; pos: THREE.Vector3; display: THREE.Group; light: THREE.PointLight; ring: THREE.Mesh }[] = [];
+  private time = 0;
+  constructor() {
+    const stone = new THREE.MeshStandardMaterial({ color: 0x4a3e3a, roughness: 0.92 });
+    const iron = new THREE.MeshStandardMaterial({ color: 0x2a2626, metalness: 0.85, roughness: 0.4 });
+    WEAPON_ORDER.forEach((id, i) => {
+      const pos = new THREE.Vector3(-4.8 + i * 3.2, 0, -1.6 - Math.abs(i - 1.5) * 0.6);
+      const w = WEAPONS[id];
+      const col = w.trail.clone().multiplyScalar(1.6);
+      const base = new THREE.Group();
+      base.position.copy(pos);
+      const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 0.9, 8), stone);
+      plinth.position.y = 0.45;
+      plinth.castShadow = true;
+      plinth.receiveShadow = true;
+      base.add(plinth);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.6, 0.12, 8), stone);
+      cap.position.y = 0.95;
+      base.add(cap);
+      // Rack frame behind the plinth.
+      for (const sx of [-0.75, 0.75]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.6, 0.12), iron);
+        post.position.set(sx, 1.3, -0.75);
+        post.castShadow = true;
+        base.add(post);
+        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.3, 4), iron);
+        tip.position.set(sx, 2.75, -0.75);
+        base.add(tip);
+      }
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), iron);
+      bar.position.set(0, 2.35, -0.75);
+      base.add(bar);
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.85, 1.0, 40).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      ring.position.y = 0.03;
+      base.add(ring);
+      // The weapon itself, floating above the plinth.
+      const display = new THREE.Group();
+      display.position.y = 1.85;
+      const glow = new THREE.Color(col.r * 0.9, col.g * 0.9, col.b * 0.9);
+      if (id === "katana") {
+        const k = katanaMesh(glow);
+        k.group.rotation.x = -Math.PI / 2;
+        k.group.position.y = -0.45;
+        k.group.scale.setScalar(1.25);
+        display.add(k.group);
+      } else if (id === "scythes") {
+        for (const side of [-1, 1]) {
+          const sc = scytheMesh(glow);
+          sc.group.rotation.set(-Math.PI / 2, 0, side * 0.45);
+          sc.group.position.set(side * 0.18, -0.35, 0);
+          sc.group.scale.setScalar(1.3);
+          display.add(sc.group);
+        }
+      } else if (id === "gauntlets") {
+        for (const side of [-1, 1]) {
+          const gt = gauntletMesh(glow);
+          gt.group.position.set(side * 0.22, 0, 0);
+          gt.group.rotation.z = side * 0.25;
+          gt.group.scale.setScalar(1.8);
+          display.add(gt.group);
+        }
+      } else {
+        const d = glaiveDiscMesh(glow);
+        d.group.scale.setScalar(1.6);
+        display.add(d.group);
+      }
+      display.scale.setScalar(1.8);
+      base.add(display);
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: col.clone().multiplyScalar(0.2), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      halo.position.set(0, 1.85, -0.2);
+      halo.scale.setScalar(2.4);
+      base.add(halo);
+      const light = new THREE.PointLight(col, 2.5, 4.5, 1.8);
+      light.position.set(0, 2.0, 1.1);
+      base.add(light);
+      this.group.add(base);
+      this.racks.push({ id, pos, display, light, ring });
+    });
+  }
+
+  update(dt: number, equipped: WeaponId) {
+    this.time += dt;
+    for (const r of this.racks) {
+      const on = r.id === equipped;
+      r.display.rotation.y += dt * (on ? 1.4 : 0.6);
+      r.display.position.y = 1.85 + Math.sin(this.time * 1.8 + r.pos.x) * 0.08;
+      (r.ring.material as THREE.MeshBasicMaterial).opacity = on ? 0.7 + Math.sin(this.time * 4) * 0.15 : 0.22;
+      r.light.intensity = on ? 4.5 : 2.2;
     }
   }
 }

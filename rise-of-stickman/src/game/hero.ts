@@ -62,6 +62,139 @@ export function revolverMesh() {
   return { group: g, muzzle };
 }
 
+/** Scythe: haft along hand +Z, a crescent blade hooking back from the far end (edge toward −Y). */
+export function scytheMesh(glow: THREE.Color) {
+  const g = new THREE.Group();
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0x9a9ca4, metalness: 0.95, roughness: 0.22, emissive: glow, emissiveIntensity: 0.25 });
+  const haftMat = new THREE.MeshStandardMaterial({ color: 0x2a1410, roughness: 0.75 });
+  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.024, 0.78, 6), haftMat);
+  haft.rotation.x = Math.PI / 2;
+  haft.position.z = 0.25;
+  g.add(haft);
+  const s = new THREE.Shape();
+  s.moveTo(0.6, 0.03);
+  s.quadraticCurveTo(0.7, -0.36, 0.2, -0.6);
+  s.quadraticCurveTo(0.52, -0.32, 0.53, 0.0);
+  s.closePath();
+  const bg = new THREE.ExtrudeGeometry(s, { depth: 0.01, bevelEnabled: false });
+  bg.translate(0, 0, -0.005);
+  bg.rotateY(-Math.PI / 2);
+  const blade = new THREE.Mesh(bg, bladeMat);
+  blade.castShadow = true;
+  g.add(blade);
+  // Bone collar where blade meets haft.
+  const collar = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshStandardMaterial({ color: 0xcfc3a8, roughness: 0.6 }));
+  collar.position.z = 0.6;
+  g.add(collar);
+  return { group: g, bladeMat };
+}
+
+/** Iron gauntlet: armoured cuff up the forearm (+Y), fist and knuckle spikes toward −Y, ember knuckle plate. */
+export function gauntletMesh(glow: THREE.Color) {
+  const g = new THREE.Group();
+  const iron = new THREE.MeshStandardMaterial({ color: 0x2c2826, metalness: 0.85, roughness: 0.38 });
+  const glowMat = new THREE.MeshStandardMaterial({ color: 0x1a0804, emissive: glow, emissiveIntensity: 0.6, roughness: 0.5 });
+  const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.07, 0.26, 8), iron);
+  cuff.position.y = 0.13;
+  cuff.castShadow = true;
+  g.add(cuff);
+  for (const y of [0.04, 0.22]) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.083, 0.014, 5, 12), iron);
+    band.rotation.x = Math.PI / 2;
+    band.position.y = y;
+    g.add(band);
+  }
+  const fist = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.13, 0.15), iron);
+  fist.position.y = -0.05;
+  fist.castShadow = true;
+  g.add(fist);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.03, 0.12), glowMat);
+  plate.position.y = -0.12;
+  g.add(plate);
+  for (let i = 0; i < 4; i++) {
+    const sp = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.09, 5), iron);
+    sp.position.set(-0.06 + i * 0.04, -0.17, 0.02);
+    sp.rotation.x = Math.PI;
+    g.add(sp);
+  }
+  // Elbow spike.
+  const el = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.14, 5), iron);
+  el.position.set(0, 0.24, -0.08);
+  el.rotation.x = -2.4;
+  g.add(el);
+  return { group: g, glowMat };
+}
+
+/** Glaive disc: a spiked bladed ring with a hub, in the XY plane. */
+export function glaiveDiscMesh(glow: THREE.Color) {
+  const g = new THREE.Group();
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0x8e939c, metalness: 0.95, roughness: 0.25, emissive: glow, emissiveIntensity: 0.25 });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.035, 6, 24), bladeMat);
+  ring.castShadow = true;
+  g.add(ring);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const sp = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.16, 3), bladeMat);
+    sp.position.set(Math.cos(a) * 0.29, Math.sin(a) * 0.29, 0);
+    sp.rotation.z = a - Math.PI / 2 - 0.5;
+    sp.scale.set(1, 1, 0.25);
+    g.add(sp);
+  }
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 10), new THREE.MeshStandardMaterial({ color: 0x3a1a10, metalness: 0.6, roughness: 0.4 }));
+  hub.rotation.x = Math.PI / 2;
+  g.add(hub);
+  for (let i = 0; i < 3; i++) {
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.025, 0.02), bladeMat);
+    spoke.rotation.z = (i / 3) * Math.PI;
+    g.add(spoke);
+  }
+  return { group: g, bladeMat };
+}
+
+/** The glaive out in the world: the disc and the chain of links back to the hand. */
+export class GlaiveChain {
+  readonly group = new THREE.Group();
+  readonly disc: ReturnType<typeof glaiveDiscMesh>;
+  private links: THREE.InstancedMesh;
+  private dummy = new THREE.Object3D();
+  private a = new THREE.Vector3();
+  constructor(glow: THREE.Color) {
+    this.disc = glaiveDiscMesh(glow);
+    this.disc.group.scale.setScalar(1.25);
+    this.group.add(this.disc.group);
+    const linkMat = new THREE.MeshStandardMaterial({ color: 0xa8a29c, metalness: 0.9, roughness: 0.3, emissive: new THREE.Color(0.08, 0.08, 0.1) });
+    this.links = new THREE.InstancedMesh(new THREE.TorusGeometry(0.032, 0.009, 4, 8), linkMat, 120);
+    this.links.frustumCulled = false;
+    this.group.add(this.links);
+    this.group.visible = false;
+  }
+
+  /** Chain from `hand` to `at` with a little sag; the disc spins at the end. */
+  show(hand: THREE.Vector3, at: THREE.Vector3, spin: number) {
+    this.group.visible = true;
+    this.disc.group.position.copy(at);
+    this.disc.group.rotation.set(Math.PI / 2, 0, spin);
+    const len = hand.distanceTo(at);
+    const n = Math.min(120, Math.max(2, Math.round(len / 0.085)));
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      this.a.lerpVectors(hand, at, t);
+      this.a.y -= Math.sin(t * Math.PI) * Math.min(0.5, len * 0.05);
+      this.dummy.position.copy(this.a);
+      this.dummy.lookAt(at);
+      this.dummy.rotation.z += i % 2 ? Math.PI / 2 : 0;
+      this.dummy.updateMatrix();
+      this.links.setMatrixAt(i, this.dummy.matrix);
+    }
+    this.links.count = n;
+    this.links.instanceMatrix.needsUpdate = true;
+  }
+
+  hide() {
+    this.group.visible = false;
+  }
+}
+
 /** Verlet scarf tail rendered as a camera-facing ribbon. */
 export class Scarf {
   readonly mesh: THREE.Mesh;
@@ -205,6 +338,13 @@ export class HeroModel {
   readonly bodyMat: THREE.MeshStandardMaterial;
   readonly wrathMat: THREE.MeshStandardMaterial;
   readonly katana: ReturnType<typeof katanaMesh>;
+  readonly scythes: ReturnType<typeof scytheMesh>[];
+  readonly gauntlets: ReturnType<typeof gauntletMesh>[];
+  readonly glaive: ReturnType<typeof glaiveDiscMesh>;
+  melee: "katana" | "scythes" | "gauntlets" | "glaive" = "katana";
+  /** The glaive disc is out on its chain (hide the one in the hand). */
+  glaiveOut = false;
+  private gunMode = false;
   readonly sheathed: THREE.Group;
   readonly guns: ReturnType<typeof revolverMesh>[];
   readonly scarves: Scarf[];
@@ -247,6 +387,19 @@ export class HeroModel {
     this.sheathed.rotation.set(-Math.PI * 0.62, 0, 0.6);
     this.rig.nape.add(this.sheathed);
     this.sheathed.visible = false;
+    // The other melee weapons (only the equipped one is shown).
+    const crimson = new THREE.Color(1, 0.15, 0.2);
+    this.scythes = [scytheMesh(crimson), scytheMesh(crimson)];
+    this.rig.bones.handR.add(this.scythes[0].group);
+    this.rig.bones.handL.add(this.scythes[1].group);
+    const ember = new THREE.Color(1.6, 0.5, 0.1);
+    this.gauntlets = [gauntletMesh(ember), gauntletMesh(ember)];
+    this.rig.bones.handR.add(this.gauntlets[0].group);
+    this.rig.bones.handL.add(this.gauntlets[1].group);
+    this.glaive = glaiveDiscMesh(new THREE.Color(0.6, 0.7, 1));
+    this.glaive.group.position.set(0, -0.2, 0.05);
+    this.glaive.group.rotation.set(0, Math.PI / 2, 0);
+    this.rig.bones.handR.add(this.glaive.group);
     // Revolvers.
     this.guns = [revolverMesh(), revolverMesh()];
     this.rig.bones.handR.add(this.guns[0].group);
@@ -266,13 +419,42 @@ export class HeroModel {
     wrap.rotation.x = Math.PI / 2;
     wrap.position.y = 0.04;
     this.rig.bones.head.add(wrap);
+    this.refresh();
   }
 
   setWeapon(mode: "sword" | "guns") {
-    const guns = mode === "guns";
-    this.katana.group.visible = !guns;
-    this.sheathed.visible = guns;
+    this.gunMode = mode === "guns";
+    this.refresh();
+  }
+
+  setMelee(id: HeroModel["melee"]) {
+    this.melee = id;
+    this.refresh();
+  }
+
+  private refresh() {
+    const guns = this.gunMode;
+    const m = this.melee;
+    this.katana.group.visible = !guns && m === "katana";
+    this.sheathed.visible = guns && m === "katana";
+    for (const s of this.scythes) s.group.visible = !guns && m === "scythes";
+    for (const gt of this.gauntlets) gt.group.visible = m === "gauntlets" && !guns;
+    this.glaive.group.visible = !guns && m === "glaive" && !this.glaiveOut;
     for (const g of this.guns) g.group.visible = guns;
+  }
+
+  setGlaiveOut(out: boolean) {
+    if (this.glaiveOut === out) return;
+    this.glaiveOut = out;
+    this.refresh();
+  }
+
+  /** Weapon glow while attacking / in Wrath. */
+  setGlow(v: number) {
+    this.katana.bladeMat.emissiveIntensity = v;
+    for (const s of this.scythes) s.bladeMat.emissiveIntensity = v;
+    for (const gt of this.gauntlets) gt.glowMat.emissiveIntensity = 0.4 + v * 0.6;
+    this.glaive.bladeMat.emissiveIntensity = v;
   }
 
   setWrath(on: boolean) {
