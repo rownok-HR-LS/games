@@ -124,6 +124,8 @@ export class Game {
   private phaseT = 0;
   /** Room reward pickup: a floating medallion showing the reward's symbol. */
   private orb: THREE.Group | null = null;
+  /** Bodies tumbling into the abyss. */
+  private fallers: { obj: THREE.Object3D; vel: THREE.Vector3; spin: THREE.Vector3 }[] = [];
   private orbMedal: THREE.Group | null = null;
   private orbRing: THREE.Mesh | null = null;
   private orbColor = new THREE.Color();
@@ -289,6 +291,8 @@ export class Game {
     this.hazards = [];
     if (this.orb) this.scene.remove(this.orb);
     this.orb = null;
+    for (const f of this.fallers) this.scene.remove(f.obj);
+    this.fallers = [];
     this.removeLord();
     if (this.shop) this.scene.remove(this.shop.group);
     if (this.fountain) this.scene.remove(this.fountain.group);
@@ -1164,6 +1168,27 @@ export class Game {
     this.hitstop(0.06);
   }
 
+  /** Let a body drop off the platform; it burns up in the lava far below. */
+  dropIntoVoid(obj: THREE.Object3D, vel: THREE.Vector3) {
+    this.fallers.push({ obj, vel: new THREE.Vector3(vel.x * 0.6, 3, vel.z * 0.6), spin: new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 6) });
+  }
+
+  private updateFallers(dt: number) {
+    this.fallers = this.fallers.filter((f) => {
+      f.vel.y -= 24 * dt;
+      f.obj.position.addScaledVector(f.vel, dt);
+      f.obj.rotation.x += f.spin.x * dt;
+      f.obj.rotation.z += f.spin.z * dt;
+      if (f.obj.position.y > -13) return true;
+      // Splash into the lava.
+      v1.copy(f.obj.position).setY(-13.5);
+      this.fx.fire(v1, 10, 1.5, 2);
+      this.fx.embers(v1, 8, 1.5);
+      this.scene.remove(f.obj);
+      return false;
+    });
+  }
+
   onPlayerDeath() {
     this.slowmo(0.2, 2);
     this.hud.letterbox(true);
@@ -1651,6 +1676,7 @@ export class Game {
     this.hexes = this.hexes.filter((h) => h.alive);
     this.updateHazards(dt);
     this.updateDebris(dt);
+    this.updateFallers(dt);
     this.room.update(dt, this.fx);
     if (this.phase === "fight" || this.phase === "killcam") this.room.updateTraps(dt, this);
     this.shop?.update(dt, this.fx);

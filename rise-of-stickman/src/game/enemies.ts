@@ -178,6 +178,8 @@ export class Enemy implements Target {
   private pitch = 0;
   readonly elite: EliteMod | null;
   shield = 0;
+  /** Recently knocked hard enough to go over the edge. */
+  private knockT = 0;
   private aura: THREE.Mesh | null = null;
   private bubble: THREE.Mesh | null = null;
   private bubbleMat: THREE.ShaderMaterial | null = null;
@@ -352,6 +354,7 @@ export class Enemy implements Target {
     const armoured = this.def.poise > 0 || this.shield > 0;
     const knock = (h.knock ?? 0) / (armoured ? 3 : 1);
     this.vel.addScaledVector(h.dir, knock);
+    if (knock >= 5) this.knockT = 0.5;
     if (this.frozenT > 0) return;
     if (armoured) {
       this.poise -= h.dmg;
@@ -389,6 +392,26 @@ export class Enemy implements Target {
     this.endAttack();
     this.enter("stun");
     this.st = 0.4;
+  }
+
+  /** Knocked over the edge: tumbles into the lava. */
+  private fallIntoVoid() {
+    const g = this.game;
+    this.alive = false;
+    this.state = "dead";
+    this.endAttack();
+    this.glintSprite.visible = false;
+    if (this.iceMesh) {
+      g.scene.remove(this.iceMesh);
+      this.iceMesh = null;
+    }
+    if (this.orb) g.scene.remove(this.orb);
+    this.dropElite();
+    g.dropIntoVoid(this.c.root, this.vel);
+    g.audio.growl(this.kind === "golem" ? 2 : 1.4);
+    g.style.add("abyss", 60);
+    g.toast("INTO THE ABYSS", "#ff8a3a");
+    g.onKill(this, { dmg: 0, dir: this.vel.clone().setY(0).normalize(), kind: "element", move: "abyss" });
   }
 
   private die(h: Hit) {
@@ -567,10 +590,12 @@ export class Enemy implements Target {
     }
 
     // Motion + collision.
-    this.vel.multiplyScalar(Math.exp(-dt * (this.state === "strike" && (this.attack === "dash" || this.attack === "bite") ? 1.5 : 7)));
+    this.vel.multiplyScalar(Math.exp(-dt * (this.state === "strike" && (this.attack === "dash" || this.attack === "bite") ? 1.5 : this.knockT > 0 ? 3.2 : 7)));
     this.pos.addScaledVector(this.vel, tdt);
     this.separate();
-    g.room.resolve(this.pos, this.radius);
+    this.knockT = Math.max(0, this.knockT - dt);
+    g.room.resolve(this.pos, this.radius, this.knockT > 0 && !this.def.flying);
+    if (!this.def.flying && this.knockT > 0 && g.room.overVoid(this.pos, this.radius * 0.5)) return this.fallIntoVoid();
 
     // Model.
     const root = this.c.root;

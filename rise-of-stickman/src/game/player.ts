@@ -25,7 +25,7 @@ import { Ghost, GlaiveChain, HeroModel } from "./hero";
 import { addPose, sampleClip, type Pose } from "./rig";
 import type { AttackOpts, AttackResult, Target } from "./types";
 
-type State = "move" | "slash" | "dash" | "parry" | "parryRecover" | "execute" | "hurt" | "wrathIntro" | "charge" | "splitter" | "dead";
+type State = "move" | "slash" | "dash" | "parry" | "parryRecover" | "execute" | "hurt" | "wrathIntro" | "charge" | "splitter" | "falling" | "dead";
 
 const SPEED = 7.4;
 export const MAG = 8;
@@ -103,6 +103,11 @@ export class Player {
   /** The thrown glaive (special): flies between enemies, then back to the hand. */
   private thrown: { pos: THREE.Vector3; target: Target | null; aim: THREE.Vector3; hit: Set<number>; left: number; back: boolean; t: number } | null = null;
   private discSpin = 0;
+  /** Falling into the abyss: drop below the platform, and where to come back to. */
+  private fallY = 0;
+  private fallVy = 0;
+  private knockFall = false;
+  private readonly safePos = new THREE.Vector3();
   private parryLen = 0.2;
   private execTarget: Target | null = null;
   private execFrom = new THREE.Vector3();
@@ -166,6 +171,8 @@ export class Player {
     this.rig.root.position.copy(this.pos);
     this.rig.root.rotation.y = yaw;
     this.rig.setPose(IDLE);
+    this.fallY = 0;
+    this.safePos.set(x, 0, z);
     this.rig.snap();
     this.rig.root.updateMatrixWorld(true);
     this.anchor(v1);
@@ -256,18 +263,27 @@ export class Player {
         this.friction(dt, 20);
         if (this.st >= 0.45) this.enter("move");
         break;
+      case "falling":
+        this.stFall(dt);
+        break;
       case "dead":
         this.friction(dt, 6);
         break;
     }
 
-    // Integrate + collide.
+    // Integrate + collide. Dashes and big knockback can carry the hero over the open edge.
     this.pos.addScaledVector(this.vel, dt);
-    g.room.resolve(this.pos, 0.4);
+    if (this.state !== "falling" && this.state !== "dead") {
+      const canFall = this.state === "dash" || (this.state === "slash" && this.slashDef === this.w.dash) || (this.state === "hurt" && this.knockFall);
+      g.room.resolve(this.pos, 0.4, canFall);
+      if (g.room.overVoid(this.pos)) this.startFall();
+      else if (!g.room.nearVoid(this.pos, 1.4) && this.state !== "hurt") this.safePos.copy(this.pos);
+    }
 
     // Model.
     const root = this.rig.root;
     root.position.copy(this.pos);
+    root.position.y += this.fallY;
     root.rotation.y = this.yaw + this.spin;
     this.glow.position.set(this.pos.x + 1.2, 3.2, this.pos.z + 1.2);
     this.glow.color.setHex(this.inWrath ? 0xff6a20 : 0xffb48a);
@@ -806,7 +822,7 @@ export class Player {
   /** Called by attackers; decides how an incoming attack resolves. */
   receive(src: Target | null, srcPos: THREE.Vector3, dmg: number, o: AttackOpts): AttackResult {
     const g = this.game;
-    if (this.state === "dead") return "dodged";
+    if (this.state === "dead" || this.state === "falling") return "dodged";
     if (this.state === "parry" && o.parryable) {
       this.onParry(src, srcPos);
       return "parried";
@@ -844,9 +860,57 @@ export class Player {
       const d = v1.subVectors(this.pos, srcPos).setY(0).normalize();
       this.vel.copy(d).multiplyScalar(o.knock ?? 6);
       this.gunModeT = 0;
+      this.knockFall = (o.knock ?? 6) >= 9;
       this.enter("hurt");
     }
     return "hit";
+  }
+
+  // ── The abyss ───────────────────────────────────────────────────────────────────────
+  private startFall() {
+    const g = this.game;
+    this.enter("falling");
+    this.fallY = 0;
+    this.fallVy = 2.2;
+    this.gunModeT = 0;
+    this.reloading = false;
+    this.thrown = null;
+    this.model.setGlaiveOut(false);
+    g.audio.hurt();
+    g.shake(0.15);
+  }
+
+  private stFall(dt: number) {
+    const g = this.game;
+    this.fallVy -= 26 * dt;
+    this.fallY += this.fallVy * dt;
+    this.vel.x *= Math.exp(-dt * 1.2);
+    this.vel.z *= Math.exp(-dt * 1.2);
+    this.spin += dt * 2.5;
+    // Flailing as he drops.
+    const f = Math.sin(this.time * 18);
+    this.rig.setPose({ y: 0, spine: [-0.3, 0, f * 0.15], head: [-0.5, 0, 0], armR: [-2.6 + f * 0.6, 0, -0.8], foreR: [-0.6, 0, 0], armL: [-2.6 - f * 0.6, 0, 0.8], foreL: [-0.6, 0, 0], thighR: [-0.9 + f * 0.5, 0, -0.2], shinR: [1.2, 0, 0], thighL: [-0.9 - f * 0.5, 0, 0.2], shinL: [1.2, 0, 0] });
+    if (this.st < 0.9 && Math.random() < dt * 20) g.fx.embers(v1.set(this.pos.x, this.fallY + 0.5, this.pos.z), 1, 0.6);
+    if (this.st < 1.15) return;
+    // The fall counts as a death.
+    this.fallY = 0;
+    this.spin = 0;
+    this.vel.set(0, 0, 0);
+    if (this.defiance > 0) {
+      this.defiance--;
+      this.hp = Math.max(this.hp, Math.round(this.maxHp * 0.4));
+      this.pos.copy(this.safePos);
+      this.iframes = 1.6;
+      this.enter("move");
+      g.toast("THE ABYSS SPITS YOU BACK", "#c06bff");
+      g.onDefiance(this.pos);
+      return;
+    }
+    this.hp = 0;
+    this.fallY = -20;
+    this.enter("dead");
+    g.toast("LOST TO THE ABYSS", "#c06bff");
+    g.onPlayerDeath();
   }
 
   private onParry(src: Target | null, srcPos: THREE.Vector3) {

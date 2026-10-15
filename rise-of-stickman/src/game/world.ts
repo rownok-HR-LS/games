@@ -693,9 +693,28 @@ export class Room {
   }
 
   /** Keep a circle of radius r inside the room and out of pillars. */
-  resolve(p: THREE.Vector3, r: number) {
-    p.x = Math.max(-this.hx + r, Math.min(this.hx - r, p.x));
-    p.z = Math.max(-this.hz + r, Math.min(this.hz - r, p.z));
+  /** The lip of the two open (near) edges, where the platform drops into the abyss. */
+  get edgeX() {
+    return this.hx + 0.45;
+  }
+  get edgeZ() {
+    return this.hz + 0.45;
+  }
+
+  /** Past the lip: nothing underfoot. */
+  overVoid(p: THREE.Vector3, margin = 0) {
+    return p.x > this.edgeX - margin || p.z > this.edgeZ - margin;
+  }
+
+  /** Within `m` of the lip. */
+  nearVoid(p: THREE.Vector3, m: number) {
+    return p.x > this.edgeX - m || p.z > this.edgeZ - m;
+  }
+
+  /** Keep a body on the platform. With `allowFall` the open edges don't hold it back (dashes, big knockback). */
+  resolve(p: THREE.Vector3, r: number, allowFall = false) {
+    p.x = Math.max(-this.hx + r, allowFall ? p.x : Math.min(this.edgeX - r, p.x));
+    p.z = Math.max(-this.hz + r, allowFall ? p.z : Math.min(this.edgeZ - r, p.z));
     for (const c of this.pillars) {
       const dx = p.x - c.x;
       const dz = p.z - c.z;
