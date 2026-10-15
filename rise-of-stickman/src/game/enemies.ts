@@ -92,6 +92,46 @@ export const ELITE_COLOR: Record<EliteMod, THREE.Color> = {
 };
 
 let nextId = 1;
+// Energy shield: Fresnel rim, faint honeycomb, a slow shimmer, a ripple from each hit, and cells that
+// drop out and flicker as the shield weakens.
+const shieldVert = /* glsl */ `
+  varying vec3 vN; varying vec3 vV; varying vec3 vP;
+  void main(){
+    vP = position;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vN = normalize(normalMatrix * normal);
+    vV = normalize(-mv.xyz);
+    gl_Position = projectionMatrix * mv;
+  }`;
+const shieldFrag = /* glsl */ `
+  uniform vec3 color; uniform float time; uniform float hit; uniform vec3 hitDir; uniform float integrity; uniform float alpha;
+  varying vec3 vN; varying vec3 vV; varying vec3 vP;
+  float hexDist(vec2 p){ p = abs(p); return max(dot(p, normalize(vec2(1.0, 1.732))), p.x); }
+  vec4 hexCell(vec2 uv){
+    vec2 r = vec2(1.0, 1.732); vec2 h = r * 0.5;
+    vec2 a = mod(uv, r) - h; vec2 b = mod(uv - h, r) - h;
+    vec2 gv = dot(a, a) < dot(b, b) ? a : b;
+    return vec4(gv, uv - gv);
+  }
+  float rnd(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+  void main(){
+    vec3 n = normalize(vP);
+    vec2 uv = vec2(atan(n.z, n.x) / 6.2832 * 16.0, acos(clamp(n.y, -1.0, 1.0)) / 3.1416 * 8.0);
+    vec4 hc = hexCell(uv);
+    float edge = smoothstep(0.07, 0.0, 0.5 - hexDist(hc.xy));
+    float id = rnd(hc.zw);
+    // Weakened shield: missing and flickering cells.
+    if (id > integrity + 0.25) discard;
+    float flick = integrity < 0.5 && id > integrity ? 0.4 + 0.6 * step(0.5, fract(time * 9.0 + id * 7.0)) : 1.0;
+    float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.4);
+    float shimmer = smoothstep(0.75, 1.0, sin(n.y * 7.0 - time * 2.2 + id * 0.6)) * 0.35;
+    float d = acos(clamp(dot(n, hitDir), -1.0, 1.0));
+    float ripple = exp(-pow((d - (1.0 - hit) * 2.6) * 5.0, 2.0)) * hit;
+    float a = fres * 0.75 + edge * (0.08 + fres * 0.55 + shimmer) + ripple * 0.9 + hit * 0.12 * fres;
+    a *= alpha * flick;
+    gl_FragColor = vec4(color * a, a);
+  }`;
+
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
 const RED_GLINT = new THREE.Color(4, 0.5, 0.2);
@@ -140,6 +180,7 @@ export class Enemy implements Target {
   shield = 0;
   private aura: THREE.Mesh | null = null;
   private bubble: THREE.Mesh | null = null;
+  private bubbleMat: THREE.ShaderMaterial | null = null;
   private game: Game;
 
   constructor(game: Game, kind: EnemyKind, x: number, z: number, elite: EliteMod | null = null) {
@@ -172,18 +213,34 @@ export class Enemy implements Target {
     if (elite) {
       root.scale.setScalar(1.12);
       const ec = ELITE_COLOR[elite];
+      // A thin halo on the floor in the elite's colour (subtle, not a glowing hoop).
       this.aura = new THREE.Mesh(
-        new THREE.RingGeometry(this.radius + 0.25, this.radius + 0.5, 32).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: ec, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }),
+        new THREE.RingGeometry(this.radius + 0.42, this.radius + 0.5, 48).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: ec.clone().multiplyScalar(0.55), transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }),
       );
       game.scene.add(this.aura);
       if (elite === "shielded") {
         this.shield = this.maxHp * 0.6;
-        this.bubble = new THREE.Mesh(
-          new THREE.IcosahedronGeometry(1, 2),
-          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.7, 0.55, 0.15), transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false, wireframe: true }),
-        );
-        this.bubble.scale.set(this.radius + 0.5, this.chest * 0.9 + 0.4, this.radius + 0.5);
+        this.bubbleMat = new THREE.ShaderMaterial({
+          uniforms: {
+            color: { value: new THREE.Color(1.0, 0.72, 0.28) },
+            time: { value: 0 },
+            hit: { value: 0 },
+            hitDir: { value: new THREE.Vector3(0, 0, 1) },
+            integrity: { value: 1 },
+            alpha: { value: 0 },
+          },
+          vertexShader: shieldVert,
+          fragmentShader: shieldFrag,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+        this.bubble = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), this.bubbleMat);
+        const sz = this.c.size;
+        const horiz = Math.max(sz.x, sz.z) * 1.12 * 0.62 + 0.2;
+        this.bubble.scale.set(horiz, sz.y * 1.12 * 0.62 + 0.25, horiz);
+        this.bubble.renderOrder = 5;
         game.scene.add(this.bubble);
       }
     }
@@ -236,15 +293,45 @@ export class Enemy implements Target {
       const absorbed = Math.min(this.shield, dmg);
       this.shield -= absorbed;
       dmg -= absorbed;
-      if (this.bubble) (this.bubble.material as THREE.MeshBasicMaterial).opacity = 0.5;
+      if (this.bubbleMat) {
+        // Ripple out from the side that was struck.
+        const u = this.bubbleMat.uniforms;
+        u.hit.value = 1;
+        u.hitDir.value.set(-h.dir.x, 0.25, -h.dir.z).normalize();
+        if (u.hitDir.value.lengthSq() < 0.5) u.hitDir.value.set(0, 1, 0);
+        u.integrity.value = Math.max(0, this.shield / (this.maxHp * 0.6));
+      }
       if (this.shield <= 0) {
         g.fx.sparks(v1.set(this.pos.x, this.chest, this.pos.z), ELITE_COLOR.shielded, 30, 8);
-        g.fx.ring(this.pos, 0.3, 2.5, ELITE_COLOR.shielded, 0.35);
+        g.fx.ring(this.pos, 0.3, 2.5, ELITE_COLOR.shielded.clone().multiplyScalar(0.5), 0.35);
         g.audio.shatter();
         g.toast("SHIELD BROKEN", "#ffd84a");
         if (this.bubble) {
+          // Shatter: shards of the shell fly off.
+          const b = this.bubble.position;
+          const shardCol = new THREE.Color(1.4, 1.0, 0.4);
+          for (let i = 0; i < 26; i++) {
+            const a = Math.random() * Math.PI * 2;
+            const e = Math.random() * 1.2 - 0.2;
+            const sx = this.bubble.scale.x;
+            g.fx.emit({
+              x: b.x + Math.cos(a) * Math.cos(e) * sx,
+              y: b.y + Math.sin(e) * this.bubble.scale.y,
+              z: b.z + Math.sin(a) * Math.cos(e) * sx,
+              vx: Math.cos(a) * (3 + Math.random() * 4),
+              vy: 2 + Math.random() * 3,
+              vz: Math.sin(a) * (3 + Math.random() * 4),
+              color: shardCol,
+              size: 0.08 + Math.random() * 0.06,
+              life: 0.5 + Math.random() * 0.4,
+              gravity: 12,
+              additive: true,
+              bounce: true,
+            });
+          }
           g.scene.remove(this.bubble);
           this.bubble = null;
+          this.bubbleMat = null;
         }
         this.endAttack();
         this.enter("stun");
@@ -415,13 +502,14 @@ export class Enemy implements Target {
     this.attackCd -= tdt;
     if (this.aura) {
       this.aura.position.set(this.pos.x, 0.04, this.pos.z);
-      (this.aura.material as THREE.MeshBasicMaterial).opacity = 0.4 + Math.sin(g.time * 6) * 0.2;
+      (this.aura.material as THREE.MeshBasicMaterial).opacity = 0.28 + Math.sin(g.time * 3) * 0.08;
     }
     if (this.bubble) {
-      this.bubble.position.set(this.pos.x, this.chest * 0.7 + this.air, this.pos.z);
-      const m = this.bubble.material as THREE.MeshBasicMaterial;
-      m.opacity += (0.35 - m.opacity) * Math.min(1, dt * 6);
-      this.bubble.rotation.y += dt;
+      this.bubble.position.set(this.pos.x, this.c.root.position.y + this.c.size.y * 1.12 * 0.5, this.pos.z);
+      const u = this.bubbleMat!.uniforms;
+      u.time.value = g.time;
+      u.hit.value = Math.max(0, u.hit.value - dt * 2.2);
+      u.alpha.value += ((this.state === "spawn" ? 0 : 1) - u.alpha.value) * Math.min(1, dt * 4);
     }
     if (this.elite === "enraged" && Math.random() < dt * 18)
       g.fx.fire(v1.set(this.pos.x + (Math.random() - 0.5) * this.radius, Math.random() * this.chest + this.air, this.pos.z + (Math.random() - 0.5) * this.radius), 1, 0.2, 0.7);
