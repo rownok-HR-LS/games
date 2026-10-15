@@ -19,6 +19,7 @@ import {
   type SlashFx,
 } from "./anims";
 import { WEAPONS, type WeaponDef, type WeaponId } from "./weapons";
+import { ASPECTS, aspectOf, buildWeapon, type AspectDef, type AspectId } from "./aspects";
 import type { Element } from "./boons";
 import type { Game } from "./game";
 import { Ghost, GlaiveChain, HeroModel } from "./hero";
@@ -97,6 +98,15 @@ export class Player {
   }
   /** Equipped melee weapon. */
   w: WeaponDef = WEAPONS.katana;
+  /** Equipped aspect of that weapon. */
+  asp: AspectDef = ASPECTS.katana[0];
+  /** Harvest stacks (+5% damage each) and time since the last attack. */
+  harvest = 0;
+  private harvestIdle = 0;
+  /** Landed hits (Phoenix bursts every 5th). */
+  private hitCount = 0;
+  /** Enemies marked by the Hunter's ricochet: id → time the mark fades. */
+  private marks = new Map<number, number>();
   private chain: GlaiveChain;
   /** Arc of the current glaive swing (for the disc on its chain). */
   private arcFrame: { c: THREE.Vector3; x: THREE.Vector3; z: THREE.Vector3; sweep: number; radius: number } | null = null;
@@ -144,8 +154,11 @@ export class Player {
     return this.model.rig;
   }
 
-  setWeapon(id: WeaponId) {
-    this.w = WEAPONS[id];
+  setWeapon(id: WeaponId, aspect?: AspectId) {
+    this.asp = aspect && aspectOf(aspect).weapon === id ? aspectOf(aspect) : ASPECTS[id][0];
+    this.w = buildWeapon(id, this.asp.id);
+    this.harvest = 0;
+    this.marks.clear();
     this.model.setMelee(id);
     this.combo = 0;
     this.thrown = null;
@@ -308,6 +321,7 @@ export class Player {
     const attacking = this.state === "slash" || this.state === "execute";
     this.model.setGlow(attacking ? 1.6 : this.inWrath ? 1.2 : 0.25);
     this.updateGlaive(dt);
+    this.updateAspects(dt);
   }
 
   private enter(s: State) {
@@ -483,7 +497,7 @@ export class Player {
       this.spin = def.spin * (1 - (1 - u) * (1 - u));
     }
     // Rift Cut: hit everything we pass through.
-    if (def === this.w.dash && def.style !== "lash") {
+    if ((def === this.w.dash || def.path) && def.style !== "lash") {
       if (this.st < 0.02) {
         this.swingSound(def);
         v1.set(this.pos.x, 1.1, this.pos.z);
@@ -555,6 +569,11 @@ export class Player {
         g.fx.decal(at.x, at.z, def.range * 0.6, new THREE.Color(0.04, 0.03, 0.025));
         g.audio.boom(def.dmg > 30 ? 1.2 : 0.8);
         g.shake(def.dmg > 30 ? 0.4 : 0.25);
+        if (this.asp.id === "phoenix" && def === this.w.special)
+          for (let i = 0; i < 5; i++) {
+            const an = (i / 5) * Math.PI * 2;
+            g.firePatch(v2.set(at.x + Math.cos(an) * 1.4, 0, at.z + Math.sin(an) * 1.4).clone());
+          }
         return;
       }
       case "punch": {
@@ -579,13 +598,71 @@ export class Player {
     }
   }
 
+  // ── Aspects ────────────────────────────────────────────────────────────────────────
+  /** Drag an enemy toward the hero (Grave vortex, Serpent hook). */
+  private pull(t: Target, keep: number) {
+    const e = t as unknown as { vel?: THREE.Vector3 };
+    if (!e.vel || t.isBoss || !t.alive) return;
+    const dx = this.pos.x - t.pos.x;
+    const dz = this.pos.z - t.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < keep) return;
+    e.vel.set((dx / d) * Math.min(14, (d - keep) * 5), 0, (dz / d) * Math.min(14, (d - keep) * 5));
+  }
+
+  /** Called by the game for every kill the hero makes. */
+  onKill(kind: string) {
+    const g = this.game;
+    if (this.asp.id === "harvest" && (kind === "blade" || kind === "special" || kind === "execute") && this.harvest < 10) {
+      this.harvest++;
+      this.harvestIdle = 0;
+      g.fx.ring(this.pos, 0.2, 1.4, new THREE.Color(1.2, 0.1, 0.15), 0.3);
+      if (this.harvest === 10) g.toast("FULL HARVEST", "#ff3b4a");
+    }
+  }
+
+  /** Phoenix: every 5th landed hit erupts in fire around the target. */
+  private phoenixHit(at: THREE.Vector3) {
+    const g = this.game;
+    if (this.asp.id !== "phoenix" || ++this.hitCount % 5 !== 0) return;
+    const c = new THREE.Color(1.8, 0.6, 0.1);
+    g.fx.ring(v1.set(at.x, 0.1, at.z), 0.2, 2.4, c, 0.35);
+    g.fx.fire(v1.set(at.x, 0.4, at.z), 14, 1.6, 1.4);
+    g.audio.burn();
+    for (const u of g.targets())
+      if (Math.hypot(u.pos.x - at.x, u.pos.z - at.z) < 2.4 + u.radius) {
+        const dir = new THREE.Vector3(u.pos.x - at.x, 0, u.pos.z - at.z).normalize();
+        u.ignite(6, 2);
+        g.damage(u, { dmg: 14 * g.mods.dmg, dir, kind: "element", move: "phoenix", element: "fire", proc: true, knock: 4 });
+      }
+  }
+
+  private updateAspects(dt: number) {
+    if (this.asp.id === "harvest" && this.harvest > 0) {
+      this.harvestIdle = this.state === "slash" ? 0 : this.harvestIdle + dt;
+      if (Math.random() < dt * this.harvest * 3) this.game.fx.embers(v1.set(this.pos.x, 0.8, this.pos.z), 1, 0.6);
+      if (this.harvestIdle > 2) {
+        this.harvest = 0;
+        this.game.toast("HARVEST LOST", "#8a6a6a");
+      }
+    }
+    if (this.marks.size) {
+      for (const t of this.game.targets()) {
+        const until = this.marks.get(t.id);
+        if (until === undefined) continue;
+        if (until < this.time) this.marks.delete(t.id);
+        else if (Math.random() < dt * 8) this.game.fx.emit({ x: t.pos.x, y: t.chest * 2 + 0.6 + t.air, z: t.pos.z, vy: 0.6, color: new THREE.Color(1.2, 0.35, 1.6), size: 0.09, life: 0.4, additive: true });
+      }
+    }
+  }
+
   // ── Glaive ─────────────────────────────────────────────────────────────────────────
   private throwDisc() {
     const g = this.game;
     this.rig.root.updateMatrixWorld(true);
     const from = this.rig.worldOf("handR", new THREE.Vector3());
     const aim = new THREE.Vector3(this.pos.x + Math.sin(this.yaw) * 9, 1.1, this.pos.z + Math.cos(this.yaw) * 9);
-    this.thrown = { pos: from, target: this.nextDiscTarget(from, new Set(), 13, true), aim, hit: new Set(), left: 5, back: false, t: 0 };
+    this.thrown = { pos: from, target: this.nextDiscTarget(from, new Set(), 13, true), aim, hit: new Set(), left: this.asp.id === "hunter" ? 8 : 5, back: false, t: 0 };
     this.model.setGlaiveOut(true);
     g.audio.chainWhip(true);
   }
@@ -684,6 +761,7 @@ export class Player {
 
   private discHit(t: Target, at: THREE.Vector3) {
     const g = this.game;
+    if (this.asp.id === "hunter") this.marks.set(t.id, this.time + 6);
     const dir = new THREE.Vector3(t.pos.x - this.pos.x, 0, t.pos.z - this.pos.z).normalize();
     g.damage(t, {
       dmg: this.w.special.dmg * g.mods.dmg * (this.inWrath ? 1.8 : 1),
@@ -729,6 +807,10 @@ export class Player {
       if (def.cone >= Math.PI && !path) dir.lerp(new THREE.Vector3(fx, 0, fz), 0.2).normalize();
       let dmg = def.dmg * mods.dmg * (this.inWrath ? 1.8 : 1);
       if (def.airBonus && t.air > 0.3) dmg *= def.airBonus;
+      const a = this.asp.id;
+      if (a === "harvest") dmg *= 1 + 0.05 * this.harvest;
+      if (a === "butcher" && ((t as unknown as { shield?: number }).shield ?? 0) > 0) dmg *= 2;
+      if (a === "hunter" && this.marks.has(t.id) && (def.style === "chain" || def.style === "lash")) dmg *= 1.3;
       let crit = false;
       if (Math.random() < 0.18 * g.loadout.power("shadow_blade")) {
         dmg *= 2;
@@ -736,6 +818,7 @@ export class Player {
       }
       const execute =
         def === this.w.combo[this.w.combo.length - 1] && g.loadout.moves.has("executioner") && !t.isBoss && t.hp < t.maxHp * 0.3;
+      this.phoenixHit(t.pos);
       g.damage(t, {
         dmg,
         dir,
@@ -749,6 +832,11 @@ export class Player {
         execute,
         at: new THREE.Vector3(t.pos.x - dir.x * t.radius * 0.5, t.chest + t.air, t.pos.z - dir.z * t.radius * 0.5),
       });
+    }
+    // Aspect effects on everything this swing hit.
+    for (const t of g.targets()) {
+      if (!this.hitIds.has(t.id)) continue;
+      if ((this.asp.id === "grave" && def.spin) || (this.asp.id === "serpent" && (def.style === "chain" || def.style === "lash"))) this.pull(t, this.asp.id === "grave" ? 1.6 : 1.2);
     }
     // Cut enemy projectiles out of the air.
     g.cutProjectiles(this.pos, r);

@@ -32,6 +32,8 @@ import { DEFS, ELITE_COLOR, Enemy, Hex, type EliteMod, type EnemyKind, type Shot
 import { Butcher } from "./miniboss";
 import { itemIcon as shopIcon, itemName, MERCHANT_LINES, pick, Armoury, Fountain, Shop, type ShopItem } from "./special";
 import { WEAPONS, type WeaponId } from "./weapons";
+import { ASPECTS, aspectOf, type AspectId } from "./aspects";
+import { loadSave, writeSave, type SaveData } from "./save";
 import { Fx } from "./fx";
 import { LordApparition, LORDS } from "./lords";
 import { Hud } from "./hud";
@@ -101,6 +103,9 @@ export class Game {
   boss: Boss | Butcher | null = null;
   private shop: Shop | null = null;
   private armoury: Armoury | null = null;
+  /** Progress kept between runs. */
+  save: SaveData = loadSave();
+  private banked = false;
   private fountain: Fountain | null = null;
   private hexes: Hex[] = [];
   private debris: Debris[] = [];
@@ -261,7 +266,9 @@ export class Game {
     this.runTime = 0;
     this.shopSeen = false;
     this.hud.boons(this.loadout);
-    this.player.setWeapon(savedWeapon());
+    this.save = loadSave();
+    this.banked = false;
+    this.player.setWeapon(this.save.weapon, this.save.aspect[this.save.weapon]);
     this.buildRoom(0, { type: "armoury", reward: null });
     this.paused = false;
     this.running = true;
@@ -360,7 +367,7 @@ export class Game {
     if (type === "armoury") {
       this.armoury = new Armoury();
       this.scene.add(this.armoury.group);
-      this.hud.say("The Armoury", "Choose your weapon. Walk to a rack and press F.");
+      this.hud.say("The Armoury", `Choose a weapon and its aspect: walk to a rack and press F. ${Math.floor(this.save.souls)} souls banked.`);
     }
     if (visit) this.openDoors();
     const names: Record<DoorPlan["type"], string> = { combat: "", elite: " · Elite", abyss: " · Abyss", shop: " · Merchant", fountain: " · Fountain", miniboss: " · The Butcher", boss: " · Warden", armoury: "" };
@@ -502,6 +509,7 @@ export class Game {
         if (this.phaseT > 1.5 && this.running) {
           this.running = false;
           this.audio.setCue("title");
+          this.bankSouls();
           this.onUi({ type: "victory", stats: this.stats() });
         }
         break;
@@ -631,11 +639,16 @@ export class Game {
       return this.afterChoice();
     }
     this.setPaused(true);
+    this.hud.markers([]);
     this.onUi({ type: "choose", title, cards, lord: !!this.lord });
   }
 
   /** Called by the UI when a card is picked. */
   choose(id: string) {
+    if (id.startsWith("asp:")) {
+      this.setPaused(false);
+      return this.pickAspect(id.slice(4) as AspectId);
+    }
     if (id.startsWith("lvl:")) this.loadout.levelUp(id.slice(4));
     const b = BLESSINGS.find((x) => x.id === id);
     const rl = RELICS.find((x) => x.id === id);
@@ -749,9 +762,9 @@ export class Game {
     }
     if (this.armoury)
       for (const r of this.armoury.racks) {
-        if (r.id === this.player.w.id || Math.hypot(p.x - r.pos.x, p.z - r.pos.z) > 1.8) continue;
-        prompt = `Take the ${WEAPONS[r.id].name}`;
-        act = () => this.equip(r.id);
+        if (Math.hypot(p.x - r.pos.x, p.z - r.pos.z) > 1.8) continue;
+        prompt = r.id === this.player.w.id ? `${WEAPONS[r.id].name}: choose aspect` : `Take the ${WEAPONS[r.id].name}`;
+        act = () => this.openAspects(r.id);
       }
     if (this.fountain && !this.fountain.used && Math.hypot(p.x - this.fountain.pos.x, p.z - this.fountain.pos.z) < 3) {
       prompt = "Drink from the Blood Fountain (heal 40%)";
@@ -765,18 +778,66 @@ export class Game {
     if (act && this.input.pressed.has("interact")) (act as () => void)();
   }
 
-  private equip(id: WeaponId) {
-    this.player.setWeapon(id);
-    try {
-      localStorage.setItem("ros.weapon", id);
-    } catch {
-      /* storage unavailable */
-    }
+  /** The three aspects of a weapon as cards (locked ones show their price). */
+  private openAspects(id: WeaponId) {
     const w = WEAPONS[id];
+    const col = `#${w.trail.clone().multiplyScalar(2).getHexString()}`;
+    const bank = Math.floor(this.save.souls);
+    this.offer(
+      `${w.name}`,
+      ASPECTS[id].map((a, i) => {
+        const owned = this.save.unlocked.includes(a.id);
+        const on = this.player.w.id === id && this.player.asp.id === a.id;
+        return {
+          id: `asp:${a.id}`,
+          name: a.name,
+          text: a.text,
+          icon: "move" as IconKind,
+          color: owned ? col : "#6a5a58",
+          rarity: on ? "#ffd24a" : owned ? col : "#4a3a38",
+          tag: `Aspect ${["I", "II", "III"][i]} · ${on ? "Equipped" : owned ? "Unlocked" : `Locked · ${a.cost} souls`}`,
+          note: owned ? undefined : bank >= a.cost ? `Unlock with ${a.cost} of your ${bank} souls` : `Need ${a.cost - bank} more souls (you have ${bank})`,
+        };
+      }),
+    );
+  }
+
+  private pickAspect(aid: AspectId) {
+    const a = aspectOf(aid);
+    if (!this.save.unlocked.includes(aid)) {
+      if (this.save.souls < a.cost) {
+        this.audio.deny();
+        this.hud.toast(`NEED ${Math.ceil(a.cost - this.save.souls)} MORE SOULS`, "#8a6a6a");
+        return;
+      }
+      this.save.souls -= a.cost;
+      this.save.unlocked.push(aid);
+      this.hud.toast("ASPECT UNLOCKED", "#ffd24a");
+    }
+    this.equip(a.weapon, aid);
+  }
+
+  private equip(id: WeaponId, aspect: AspectId) {
+    this.player.setWeapon(id, aspect);
+    this.save.weapon = id;
+    this.save.aspect[id] = aspect;
+    writeSave(this.save);
+    const w = WEAPONS[id];
+    const a = aspectOf(aspect);
     this.audio.buy();
     this.fx.ring(this.player.pos, 0.2, 1.8, w.trail.clone().multiplyScalar(2), 0.4);
     this.hud.toast(w.name.toUpperCase(), `#${w.trail.clone().multiplyScalar(1.8).getHexString()}`);
-    this.hud.say(w.name, w.blurb);
+    this.hud.say(a.name, a.text);
+  }
+
+  /** Add this run's souls to the bank (once per run). */
+  private bankSouls() {
+    if (this.banked) return;
+    this.banked = true;
+    const n = Math.floor(this.souls);
+    this.save.souls += n;
+    writeSave(this.save);
+    if (n > 0) this.hud.toast(`+${n} SOULS BANKED`, "#7fd8ff");
   }
 
   private buy(i: number) {
@@ -1053,6 +1114,7 @@ export class Game {
   // ── Events ──────────────────────────────────────────────────────────────────────────
   onKill(t: Target, h: Hit) {
     this.kills++;
+    this.player.onKill(h.kind);
     const at = v1.set(t.pos.x, t.chest + t.air, t.pos.z).clone();
     this.fx.bleed(at, h.dir.x, h.dir.z, t.isBoss ? 6 : 2.5, 1.6);
     const souls = (t instanceof Enemy ? DEFS[t.kind].souls : 220) * SOUL_MUL[this.style.rank];
@@ -1190,6 +1252,7 @@ export class Game {
   }
 
   onPlayerDeath() {
+    this.bankSouls();
     this.slowmo(0.2, 2);
     this.hud.letterbox(true);
     this.phase = "over";
@@ -1577,6 +1640,7 @@ export class Game {
 
 /** Door rewards and shop prices as screen labels; doors off-screen get pinned to the edge with an arrow. */
   private updateMarkers() {
+    if (this.paused) return this.hud.markers([]);
     const list: Marker[] = [];
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
@@ -1625,7 +1689,7 @@ export class Game {
       for (const r of this.armoury.racks) {
         const w = WEAPONS[r.id];
         const on = r.id === this.player.w.id;
-        place(r.pos.clone().setY(3.2), { icon: "move", title: w.name, sub: on ? "Equipped" : "Press F to take", color: on ? "#ffd24a" : `#${w.trail.clone().multiplyScalar(2.2).getHexString()}` }, false);
+        place(r.pos.clone().setY(3.2), { icon: "move", title: w.name, sub: on ? `Equipped · ${this.player.asp.name.replace("Aspect of the ", "")}` : "Press F", color: on ? "#ffd24a" : `#${w.trail.clone().multiplyScalar(2.2).getHexString()}` }, false);
       }
     if (this.shop)
       for (const it of this.shop.items) {
@@ -1698,14 +1762,3 @@ export class Game {
   }
 }
 
-
-/** Last weapon the player took from the armoury. */
-function savedWeapon(): WeaponId {
-  try {
-    const v = localStorage.getItem("ros.weapon");
-    if (v && v in WEAPONS) return v as WeaponId;
-  } catch {
-    /* storage unavailable */
-  }
-  return "katana";
-}

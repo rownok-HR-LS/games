@@ -43,12 +43,25 @@ const ART: Record<string, string> = {
   splitter: `${at(0, -4, `<path d="M0 -18 V6 M-6 -2 h12" stroke-width="2.8"/>`, "sg-chop")}<path d="M-20 12 h40" stroke-opacity=".5"/>${at(0, 12, `<path d="M-4 0 L-10 6 M4 0 L10 6 M0 0 L0 7"/>`, "sg-burst")}`,
   barrage: `<g class="sg-spin-fast"><path d="M-12 -3 h18 v6 h-10 l-2 6 h-5 l1 -6 h-2z" fill="currentColor" fill-opacity=".25"/><circle cx="-3" cy="0" r="3"/></g>`,
   phantom: `${at(-12, 2, STICK, "sg-clone", "animation-delay:-.6s")}${at(-2, 2, STICK, "sg-clone", "animation-delay:-.3s")}${at(10, 2, STICK)}`,
+  // ── Weapon aspects ──
+  horseman: `${KATANA}${at(-12, -12, `<path d="M-5 4 v-5 a5 5 0 0 1 10 0 v5" stroke-width="2.6"/>`, "sg-pulse")}`,
+  ronin: `${at(0, 0, `<path d="M-12 -14 L0 -21 L12 -14z" fill="currentColor" fill-opacity=".3"/>`)}${at(0, 4, `<path d="M-17 13 Q1 -1 17 -19" stroke-dasharray="3 4" stroke-opacity=".5"/>`, "sg-slide-s")}${KATANA}`,
+  butcher: `${at(0, -2, `<path d="M-14 -10 h20 v12 h-20z" fill="currentColor" fill-opacity=".3"/><path d="M6 -4 h10" stroke-width="3.4"/><circle cx="-9" cy="-5" r="1.6" fill="currentColor"/>`, "sg-chop")}<path d="M-20 14 h40" stroke-opacity=".45"/>`,
+  reaper: `<g class="sg-spin-slow"><path d="M-2 -18 q16 2 16 18 q-6 -10 -16 -10z" fill="currentColor" fill-opacity=".3"/><path d="M2 18 q-16 -2 -16 -18 q6 10 16 10z" fill="currentColor" fill-opacity=".3"/></g><path d="M-14 14 L14 -14"/>`,
+  harvest: `<path d="M-12 14 h24" stroke-opacity=".5"/>${at(-8, 8, `<circle r="2.6" fill="currentColor"/>`, "sg-drip", "animation-direction:reverse")}${at(0, 8, `<circle r="2.6" fill="currentColor"/>`, "sg-drip", "animation-direction:reverse;animation-delay:-.5s")}${at(8, 8, `<circle r="2.6" fill="currentColor"/>`, "sg-drip", "animation-direction:reverse;animation-delay:-1s")}<path d="M-14 -8 q14 -14 28 0" stroke-width="2.6"/>`,
+  grave: `<g class="sg-spin"><path d="M0 0 m0 -3 a3 3 0 1 1 -3 3 a6 6 0 0 1 6 -6 a9 9 0 0 1 9 9 a12 12 0 0 1 -12 12 a15 15 0 0 1 -15 -15"/></g>`,
+  brawler: `${at(0, 0, `<path d="M-7 -6 h12 a3 3 0 0 1 3 3 v8 a3 3 0 0 1 -3 3 h-12 a3 3 0 0 1 -3 -3 v-8 a3 3 0 0 1 3 -3z" fill="currentColor" fill-opacity=".25"/><path d="M-4 -6 v5 M0 -6 v5 M4 -6 v5 M-10 1 h-4 v-6"/>`, "sg-slide-s")}`,
+  titan: `${at(-3, 0, `<path d="M-7 -6 h12 a3 3 0 0 1 3 3 v8 a3 3 0 0 1 -3 3 h-12 a3 3 0 0 1 -3 -3 v-8 a3 3 0 0 1 3 -3z" fill="currentColor" fill-opacity=".25"/><path d="M-4 -6 v5 M0 -6 v5 M4 -6 v5 M-10 1 h-4 v-6"/>`)}${at(14, 0, `<path d="M0 -10 l4 6 M0 10 l4 -6 M2 0 h8" stroke-width="2.4"/>`, "sg-burst")}`,
+  phoenix: `${at(0, 6, `<path d="M0 0 q-14 -4 -18 -18 q8 8 14 6 q-2 -8 4 -12 q6 4 4 12 q6 2 14 -6 q-4 14 -18 18z" fill="currentColor" fill-opacity=".35"/>`, "sg-flicker")}`,
+  warden: `<g class="sg-spin"><circle r="10"/><path d="M0 -14 l3 4 h-6z M14 0 l-4 3 v-6z M0 14 l-3 -4 h6z M-14 0 l4 -3 v6z" fill="currentColor"/></g><path d="M-22 18 l8 -8" stroke-dasharray="2 3"/>`,
+  hunter: `<circle r="12"/><path d="M0 -18 v8 M0 10 v8 M-18 0 h8 M10 0 h8"/>${at(0, 0, `<circle r="3" fill="currentColor"/>`, "sg-pulse")}`,
+  serpent: `<g class="sg-bob"><path d="M-16 12 q-4 -10 6 -10 q10 0 10 -8 q0 -8 10 -6" stroke-dasharray="3 2.5" stroke-width="2.6"/><circle cx="12" cy="-12" r="3.4" fill="currentColor"/></g>`,
   executioner: `<path d="M-8 6 a8 9 0 1 1 16 0 v4 h-16z" fill="currentColor" fill-opacity=".2" stroke-opacity=".7"/>${at(4, -8, `<path d="M0 -12 V12" stroke-width="2.8"/><path d="M0 -12 q12 2 10 12 q-6 -3 -10 -2z" fill="currentColor" fill-opacity=".35"/>`, "sg-axe")}`,
 };
 
 /** Inline SVG emblem for a blessing / relic / move id (also "lvl:<id>"), or null if there is none. */
 export function sigilSvg(id: string): string | null {
-  const key = id.startsWith("lvl:") ? id.slice(4) : id;
+  const key = id.startsWith("lvl:") || id.startsWith("asp:") ? id.slice(4) : id;
   const art = ART[key];
   if (!art) return null;
   return `<svg class="ros-sigil" viewBox="-32 -32 64 64" aria-hidden="true">

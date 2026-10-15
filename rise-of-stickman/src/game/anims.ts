@@ -227,6 +227,8 @@ export type SlashDef = {
   airBonus?: number;
   /** Keep moving forward at this speed for the whole move (steerable). */
   travel?: number;
+  /** Hits everything along the lunge path (dash attacks, teleport cuts). */
+  path?: boolean;
 };
 
 const S1A: Pose = {
