@@ -4,6 +4,7 @@ import type { Action } from "./input";
 import { CHANGES, CREDITS } from "./credits";
 import { loadModels, RUN_MODELS } from "./models";
 import { iconCanvas } from "./textures";
+import { sigilSvg } from "./sigils";
 
 type Screen = "title" | "intro" | "play" | "choose" | "paused" | "dead" | "victory";
 type Settings = { music: boolean; sfx: boolean; quality: Quality; blood: boolean };
@@ -219,7 +220,7 @@ export default function RiseOfStickman() {
           <div className="ros-cards">
             {choice.cards.map((c) => (
               <button key={c.id} className="ros-card" style={{ ["--c" as string]: c.color, ["--r" as string]: c.rarity ?? c.color }} onClick={() => pick(c.id)}>
-                <Icon kind={c.icon} />
+                <Emblem id={c.id} kind={c.icon} />
                 <small>{c.tag}</small>
                 <h3>{c.name}</h3>
                 <p>{c.text}</p>
@@ -277,6 +278,13 @@ function Icon({ kind }: { kind: Parameters<typeof iconCanvas>[0] }) {
     g.drawImage(iconCanvas(kind), 0, 0, c.width, c.height);
   }, [kind]);
   return <canvas ref={ref} width={128} height={128} className="ros-icon" />;
+}
+
+/** The power's own animated emblem, or the generic icon for rewards without one. */
+function Emblem({ id, kind }: { id: string; kind: Parameters<typeof iconCanvas>[0] }) {
+  const svg = sigilSvg(id);
+  if (!svg) return <Icon kind={kind} />;
+  return <span className="ros-sigil-box" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
 function Credits() {

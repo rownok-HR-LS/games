@@ -9,6 +9,7 @@ import type { Game } from "./game";
 import { angDiff } from "./player";
 import type { Hit, Target } from "./types";
 import { glow } from "./world";
+import { wallTexture } from "./textures";
 
 export type EnemyKind = "hound" | "imp" | "golem" | "mantis";
 
@@ -82,7 +83,7 @@ export const SPECS: Record<EnemyKind, CreatureSpec> = {
 };
 
 type State = "spawn" | "chase" | "windup" | "strike" | "recover" | "hurt" | "air" | "down" | "stun" | "cast" | "dead";
-type Attack = "bite" | "slam" | "swipe" | "dash" | "cast";
+type Attack = "bite" | "slam" | "swipe" | "dash" | "cast" | "spit" | "hurl" | "spines";
 export type EliteMod = "shielded" | "enraged" | "volatile";
 export const ELITE_COLOR: Record<EliteMod, THREE.Color> = {
   shielded: new THREE.Color(2.4, 1.9, 0.6),
@@ -160,7 +161,7 @@ export class Enemy implements Target {
     game.scene.add(root);
     if (kind === "imp") {
       // Hexfire gathers between the demon's claws while it casts.
-      this.orb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 0.5, 1.4) }));
+      this.orb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.5, 0.06, 0.1) }));
       this.orb.visible = false;
       game.scene.add(this.orb);
     }
@@ -541,7 +542,10 @@ export class Enemy implements Target {
         if (k === "hound") pitchTarget = 0.12;
         break;
       case "cast":
-        c.play("cast", { loop: false, speed: 1.6 });
+        if (c.has("cast")) c.play("cast", { loop: false, speed: 1.6 });
+        else c.play("idle");
+        if (k === "hound") pitchTarget = 0.35 * u;
+        if (k === "mantis") pitchTarget = -0.3 * u;
         if (this.orb) {
           this.orb.visible = true;
           this.orb.scale.setScalar(Math.max(0.1, u));
@@ -586,6 +590,13 @@ export class Enemy implements Target {
           R.rotateX(0.7);
           L.rotateX(0.7);
           spine.rotateX(0.45);
+        } else if (s === "cast" && a === "hurl") {
+          R.rotateX(2.7 * u);
+          spine.rotateX(-0.35 * u);
+          spine.rotateY(-0.4 * u);
+        } else if (s === "recover" && a === "hurl" && this.st < 0.35) {
+          R.rotateX(0.5);
+          spine.rotateX(0.35);
         } else if (s === "windup" && a === "swipe") {
           R.rotateX(1.4 * u);
           spine.rotateY(-0.8 * u);
@@ -639,6 +650,12 @@ export class Enemy implements Target {
       side = this.strafe * 0.7;
       if (this.attackCd <= 0 && dist < 15) return this.beginAttack("cast");
     } else {
+      // Ranged options: hounds spit fire, the Minotaur hurls boulders, Cry Wolves spray bone spines.
+      if (this.attackCd <= 0) {
+        if (kind === "hound" && dist > 4.5 && dist < 10 && Math.random() < dt * 1.1) return this.beginAttack("spit");
+        if (kind === "golem" && dist > 5 && dist < 14 && Math.random() < dt * 0.9) return this.beginAttack("hurl");
+        if (kind === "mantis" && dist > 6.5 && dist < 12 && Math.random() < dt * 1.2) return this.beginAttack("spines");
+      }
       const reach = kind === "golem" ? 2.9 : kind === "mantis" ? 7 : 2.6;
       if (dist > reach * 0.85) want = 1;
       else if (this.attackCd <= 0) {
@@ -670,7 +687,8 @@ export class Enemy implements Target {
   private beginAttack(a: Attack) {
     const g = this.game;
     this.attack = a;
-    this.enter(a === "cast" ? "cast" : "windup");
+    const ranged = a === "cast" || a === "spit" || a === "hurl" || a === "spines";
+    this.enter(ranged ? "cast" : "windup");
     this.vel.multiplyScalar(0.2);
     const fx = Math.sin(this.yaw);
     const fz = Math.cos(this.yaw);
@@ -682,6 +700,8 @@ export class Enemy implements Target {
       this.tel = g.fx.telegraph("rect", this.pos, this.yaw, 1.4, 8, this.windupTime());
     } else if (a === "swipe") {
       this.tel = g.fx.telegraph("sector", this.pos, this.yaw, 3.3, 1.1, this.windupTime(), new THREE.Color(1.2, 0.1, 0.05));
+    } else if (a === "spines") {
+      this.tel = g.fx.telegraph("sector", this.pos, this.yaw, 9, 0.42, this.windupTime(), new THREE.Color(0.9, 0.82, 0.65));
     }
     if (a !== "cast" && a !== "slam") this.glint(this.windupTime() - 0.3);
   }
@@ -698,6 +718,12 @@ export class Enemy implements Target {
         return 0.62;
       case "cast":
         return 0.7;
+      case "spit":
+        return 0.6;
+      case "hurl":
+        return 1.0;
+      case "spines":
+        return 0.6;
     }
   }
 
@@ -716,9 +742,20 @@ export class Enemy implements Target {
         this.tel.mesh.position.set(this.pos.x + this.dashDir.x * 4, 0.03, this.pos.z + this.dashDir.z * 4);
       }
       if (a === "slam" && this.tel) this.tel.mesh.position.set(this.pos.x + fx * 2.2, 0.03, this.pos.z + fz * 2.2);
+      if (a === "spines" && this.tel) {
+        this.tel.mesh.position.set(this.pos.x, 0.03, this.pos.z);
+        this.tel.mesh.rotation.y = this.yaw + Math.PI;
+      }
       if (this.st >= W) {
         if (this.state === "cast") {
-          this.fireHex();
+          if (this.tel) {
+            g.fx.endTel(this.tel);
+            this.tel = null;
+          }
+          if (a === "spit") this.fireSpit();
+          else if (a === "hurl") this.fireBoulder();
+          else if (a === "spines") this.fireSpines();
+          else this.fireHex();
           this.enter("recover");
         } else {
           this.enter("strike");
@@ -773,7 +810,8 @@ export class Enemy implements Target {
     const rec = this.kind === "golem" ? 1.0 : this.kind === "imp" ? 0.45 : 0.65;
     if (this.st >= rec) {
       this.endAttack();
-      this.attackCd = ((this.kind === "imp" ? 1.7 : this.kind === "golem" ? 1.3 : 0.75) + Math.random() * 0.9) * (this.elite === "enraged" ? 0.55 : 1);
+      const rangedCd = this.attack === "spit" || this.attack === "hurl" || this.attack === "spines" ? 1.3 : 0;
+      this.attackCd = ((this.kind === "imp" ? 1.7 : this.kind === "golem" ? 1.3 : 0.75) + rangedCd + Math.random() * 0.9) * (this.elite === "enraged" ? 0.55 : 1);
       this.enter("chase");
     }
   }
@@ -782,34 +820,132 @@ export class Enemy implements Target {
     return this.def.dmg * (this.elite === "enraged" ? 1.25 : 1);
   }
 
+  /** Blood Demon: a fan of three crimson needles. */
   private fireHex() {
     const g = this.game;
     this.strikePoint(v1);
     if (this.orb) this.orb.visible = false;
     const p = g.player.pos;
-    v2.set(p.x - v1.x, 0, p.z - v1.z).normalize();
-    g.spawnHex(v1.clone().setY(Math.min(1.6, v1.y)), v2.clone().multiplyScalar(11.5), this.hitDmg());
-    g.audio.cast();
+    const base = Math.atan2(p.x - v1.x, p.z - v1.z);
+    const from = v1.clone().setY(Math.min(1.6, v1.y));
+    for (const off of [-0.2, 0, 0.2]) {
+      const a = base + off;
+      g.spawnHex(from.clone(), new THREE.Vector3(Math.sin(a), 0, Math.cos(a)).multiplyScalar(13), this.hitDmg() * 0.55, "needle");
+    }
+    g.audio.needles();
+  }
+
+  /** Hell Hound: lob a molten glob at where the hero stands; it leaves a burning puddle. */
+  private fireSpit() {
+    const g = this.game;
+    this.strikePoint(v1);
+    const from = v1.clone().setY(Math.max(0.6, v1.y));
+    const p = g.player.pos;
+    const to = new THREE.Vector3(p.x + g.player.vel.x * 0.35, 0, p.z + g.player.vel.z * 0.35);
+    const t = 0.75;
+    const tel = g.fx.telegraph("circle", to, 0, 1.15, 0, t, new THREE.Color(1.5, 0.45, 0.04));
+    g.spawnHex(from, Hex.lob(from, to, t), this.hitDmg() * 0.8, "spit", tel);
+    g.audio.spit();
+  }
+
+  /** Minotaur: hurl a boulder; a red circle marks where it lands. */
+  private fireBoulder() {
+    const g = this.game;
+    this.strikePoint(v1);
+    const from = v1.clone().setY(Math.max(2.2, v1.y));
+    const p = g.player.pos;
+    const to = new THREE.Vector3(p.x + g.player.vel.x * 0.5, 0, p.z + g.player.vel.z * 0.5);
+    const t = 1.05;
+    const tel = g.fx.telegraph("circle", to, 0, 1.9, 0, t);
+    g.spawnHex(from, Hex.lob(from, to, t), this.hitDmg() * 0.9, "boulder", tel);
+    g.audio.hurl();
+  }
+
+  /** Cry Wolf: a spread of five bone spines. */
+  private fireSpines() {
+    const g = this.game;
+    const from = new THREE.Vector3(this.pos.x, this.chest, this.pos.z);
+    for (let i = -2; i <= 2; i++) {
+      const a = this.yaw + i * 0.16;
+      g.spawnHex(from.clone(), new THREE.Vector3(Math.sin(a), 0, Math.cos(a)).multiplyScalar(17), this.hitDmg() * 0.4, "spine");
+    }
+    g.audio.spines();
   }
 }
 
 // ── Projectiles ───────────────────────────────────────────────────────────────────────
+/**
+ * needle: Blood Demon's crimson needles (straight, slight homing, parryable).
+ * spit: Hell Hound's lobbed molten glob (arcs to a marked spot, leaves a burning puddle).
+ * boulder: Minotaur's hurled rock (arcs to a marked spot, shockwave on landing, not parryable).
+ * spine: Cry Wolf's bone spines (fast, straight, fanned, parryable).
+ */
+export type ShotStyle = "needle" | "spit" | "boulder" | "spine";
+const GRAV = 22;
+const UP = new THREE.Vector3(0, 1, 0);
+const SHOT_GEO: Partial<Record<ShotStyle, THREE.BufferGeometry>> = {};
+let rockTex: THREE.Texture | null = null;
+function shotMesh(style: ShotStyle) {
+  switch (style) {
+    case "needle":
+      SHOT_GEO.needle ??= new THREE.ConeGeometry(0.06, 0.75, 6);
+      return new THREE.Mesh(SHOT_GEO.needle, new THREE.MeshBasicMaterial({ color: new THREE.Color(1.5, 0.08, 0.12) }));
+    case "spine":
+      SHOT_GEO.spine ??= new THREE.ConeGeometry(0.05, 0.62, 5);
+      return new THREE.Mesh(SHOT_GEO.spine, new THREE.MeshStandardMaterial({ color: 0xe6d8bc, roughness: 0.5, emissive: new THREE.Color(0.35, 0.3, 0.22) }));
+    case "spit":
+      SHOT_GEO.spit ??= new THREE.IcosahedronGeometry(0.24, 1);
+      return new THREE.Mesh(SHOT_GEO.spit, new THREE.MeshBasicMaterial({ color: new THREE.Color(1.5, 0.45, 0.05) }));
+    case "boulder":
+      if (!SHOT_GEO.boulder) {
+        // A lumpy rock: a subdivided icosahedron with its vertices pushed in and out.
+        const geo = new THREE.IcosahedronGeometry(0.44, 2);
+        const p = geo.getAttribute("position");
+        const v = new THREE.Vector3();
+        for (let i = 0; i < p.count; i++) {
+          v.fromBufferAttribute(p, i);
+          const n = 0.82 + 0.3 * Math.abs(Math.sin(v.x * 9.1) * Math.cos(v.y * 7.3 + v.z * 5.7));
+          p.setXYZ(i, v.x * n, v.y * n * 0.9, v.z * n);
+        }
+        geo.computeVertexNormals();
+        SHOT_GEO.boulder = geo;
+      }
+      rockTex ??= wallTexture([96, 82, 76], 11);
+      return new THREE.Mesh(SHOT_GEO.boulder, new THREE.MeshStandardMaterial({ map: rockTex, color: 0x6e6862, roughness: 1, metalness: 0.1 }));
+  }
+}
+
 export class Hex {
   readonly mesh: THREE.Mesh;
   readonly pos: THREE.Vector3;
   readonly vel: THREE.Vector3;
+  readonly style: ShotStyle;
+  /** Arcing shots fly to `land` and only hurt where they come down. */
+  readonly lobbed: boolean;
   dmg: number;
   life = 3.2;
   owner: "enemy" | "player" = "enemy";
   alive = true;
-  private homing = 0.7;
-  constructor(scene: THREE.Scene, pos: THREE.Vector3, vel: THREE.Vector3, dmg: number) {
+  private homing: number;
+  private tel: ReturnType<Game["fx"]["telegraph"]> | null;
+  private c = new THREE.Color();
+  constructor(scene: THREE.Scene, pos: THREE.Vector3, vel: THREE.Vector3, dmg: number, style: ShotStyle = "needle", tel: Hex["tel"] = null) {
     this.pos = pos;
     this.vel = vel;
     this.dmg = dmg;
-    this.mesh = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 0.5, 1.4) }));
+    this.style = style;
+    this.lobbed = style === "spit" || style === "boulder";
+    this.homing = style === "needle" ? 0.35 : 0;
+    this.tel = tel;
+    this.mesh = shotMesh(style);
+    this.mesh.castShadow = style === "boulder";
     this.mesh.position.copy(pos);
     scene.add(this.mesh);
+  }
+
+  /** Launch velocity that lands on `to` after `t` seconds. */
+  static lob(from: THREE.Vector3, to: THREE.Vector3, t: number) {
+    return new THREE.Vector3((to.x - from.x) / t, (to.y - from.y + 0.5 * GRAV * t * t) / t, (to.z - from.z) / t);
   }
 
   reflect(dir: THREE.Vector3) {
@@ -817,7 +953,8 @@ export class Hex {
     this.vel.copy(dir).multiplyScalar(19);
     this.dmg *= 2.5;
     this.life = 2;
-    (this.mesh.material as THREE.MeshBasicMaterial).color.setRGB(3, 1.4, 0.4);
+    const m = this.mesh.material as THREE.MeshBasicMaterial;
+    m.color.setRGB(3, 1.4, 0.4);
   }
 
   update(dt: number, game: Game) {
@@ -826,19 +963,22 @@ export class Hex {
       this.homing -= dt;
       const p = game.player.pos;
       v1.set(p.x - this.pos.x, 0, p.z - this.pos.z).normalize().multiplyScalar(this.vel.length());
-      this.vel.lerp(v1, Math.min(1, dt * 1.6));
+      this.vel.lerp(v1, Math.min(1, dt * 1.2));
     }
+    if (this.lobbed) this.vel.y -= GRAV * dt;
     this.pos.addScaledVector(this.vel, dt);
     this.mesh.position.copy(this.pos);
-    this.mesh.scale.setScalar(1 + Math.sin(game.time * 40) * 0.15);
-    const col = this.owner === "enemy" ? new THREE.Color(1.8, 0.35, 1.0) : new THREE.Color(2.6, 1.0, 0.3);
-    game.fx.emit({ x: this.pos.x, y: this.pos.y, z: this.pos.z, color: col, size: 0.35, life: 0.25, additive: true, shrink: true });
+    this.trail(game, dt);
+    if (this.lobbed) {
+      if (this.pos.y <= 0.15) return this.land(game);
+      return;
+    }
     const r = game.room;
     if (this.life <= 0 || Math.abs(this.pos.x) > r.hx + 0.5 || Math.abs(this.pos.z) > r.hz + 0.5) return this.burst(game);
     if (this.owner === "enemy") {
       const p = game.player;
-      if (Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z) < 0.6) {
-        const res = p.receive(null, this.pos, this.dmg, { parryable: true, kind: "projectile", knock: 5 });
+      if (Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z) < (this.style === "spine" ? 0.5 : 0.6)) {
+        const res = p.receive(null, this.pos, this.dmg, { parryable: true, kind: "projectile", knock: this.style === "spine" ? 3 : 5 });
         if (res === "parried") {
           let best: THREE.Vector3 | null = null;
           let bd = 1e9;
@@ -866,11 +1006,72 @@ export class Hex {
     }
   }
 
+  private trail(game: Game, dt: number) {
+    const fx = game.fx;
+    const p = this.pos;
+    switch (this.style) {
+      case "needle":
+        // Point along the flight path; drip blood behind.
+        this.mesh.quaternion.setFromUnitVectors(UP, v2.copy(this.vel).normalize());
+        if (Math.random() < dt * 40) fx.emit({ x: p.x, y: p.y, z: p.z, vx: (Math.random() - 0.5) * 0.4, vy: 0.2, vz: (Math.random() - 0.5) * 0.4, color: this.c.setRGB(0.35, 0.0, 0.02), size: 0.07, life: 0.5, gravity: 9 });
+        fx.emit({ x: p.x, y: p.y, z: p.z, color: this.c.setRGB(0.9, 0.04, 0.08), size: 0.16, life: 0.14, additive: true, shrink: true });
+        break;
+      case "spine":
+        this.mesh.quaternion.setFromUnitVectors(UP, v2.copy(this.vel).normalize());
+        if (Math.random() < dt * 30) fx.emit({ x: p.x, y: p.y, z: p.z, color: this.c.setRGB(0.32, 0.28, 0.24), alpha: 0.35, size: 0.18, grow: 0.3, life: 0.35, drag: 2 });
+        break;
+      case "spit":
+        this.mesh.scale.setScalar(1 + Math.sin(this.life * 30) * 0.12);
+        if (Math.random() < dt * 40) fx.fire(p, 1, 0.15, 0.55);
+        if (Math.random() < dt * 20) fx.emit({ x: p.x, y: p.y, z: p.z, vy: -1, color: this.c.setRGB(1.2, 0.3, 0.03), size: 0.06, life: 0.4, additive: true, gravity: 12 });
+        break;
+      case "boulder":
+        this.mesh.rotation.x += dt * 7;
+        this.mesh.rotation.z += dt * 4;
+        if (Math.random() < dt * 22) fx.smoke(p, this.c.setRGB(0.1, 0.07, 0.06), 1, 0.45, 0.4);
+        if (Math.random() < dt * 14) fx.embers(p, 1, 0.4);
+        break;
+    }
+  }
+
+  /** Arcing shots come down: puddle of fire or a shockwave. */
+  private land(game: Game) {
+    this.alive = false;
+    game.scene.remove(this.mesh);
+    if (this.tel) game.fx.endTel(this.tel);
+    const at = v1.set(this.pos.x, 0.05, this.pos.z);
+    const p = game.player;
+    const d = Math.hypot(p.pos.x - at.x, p.pos.z - at.z);
+    if (this.style === "spit") {
+      game.firePatch(at, true);
+      game.fx.sparks(at, this.c.setRGB(1.8, 0.6, 0.08), 14, 5);
+      game.fx.ring(at, 0.2, 1.3, this.c.setRGB(1.6, 0.45, 0.05), 0.3);
+      game.audio.burn();
+      if (d < 1.1) p.receive(null, at, this.dmg, { parryable: false, kind: "aoe", knock: 4 });
+    } else {
+      game.fx.ring(at, 0.3, 2.4, this.c.setRGB(1.6, 0.7, 0.3), 0.45);
+      game.fx.smoke(at, this.c.setRGB(0.14, 0.1, 0.08), 12, 1.2, 0.55);
+      game.fx.sparks(v2.set(at.x, 0.4, at.z), this.c.setRGB(1.6, 0.8, 0.3), 18, 7);
+      game.fx.decal(at.x, at.z, 1.8, new THREE.Color(0.04, 0.03, 0.025));
+      game.audio.boom(1.1);
+      game.shake(0.3);
+      if (d < 1.9) p.receive(null, at, this.dmg, { parryable: false, kind: "aoe", knock: 10 });
+    }
+  }
+
   burst(game: Game) {
     this.alive = false;
     game.scene.remove(this.mesh);
-    const col = this.owner === "enemy" ? new THREE.Color(2, 0.4, 1.2) : new THREE.Color(3, 1.2, 0.3);
-    game.fx.sparks(this.pos, col, 12, 5);
-    game.fx.flash(this.pos, col, 1.4, 0.15);
+    if (this.tel) game.fx.endTel(this.tel);
+    if (this.owner === "player") {
+      game.fx.sparks(this.pos, this.c.setRGB(3, 1.2, 0.3), 12, 5);
+      game.fx.flash(this.pos, this.c, 1.2, 0.12);
+    } else if (this.style === "needle") {
+      game.fx.bleed(this.pos, -this.vel.x * 0.05, -this.vel.z * 0.05, 0.6);
+      game.fx.sparks(this.pos, this.c.setRGB(1.2, 0.05, 0.08), 6, 3);
+    } else if (this.style === "spine") {
+      game.fx.sparks(this.pos, this.c.setRGB(1.1, 1.0, 0.85), 6, 4);
+      game.fx.smoke(this.pos, this.c.setRGB(0.3, 0.26, 0.22), 2, 0.35, 0.35);
+    } else game.fx.sparks(this.pos, this.c.setRGB(1.6, 0.5, 0.1), 10, 4);
   }
 }

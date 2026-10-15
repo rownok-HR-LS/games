@@ -28,7 +28,7 @@ import {
 } from "./boons";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { Creature } from "./creatures";
-import { DEFS, ELITE_COLOR, Enemy, Hex, type EliteMod, type EnemyKind } from "./enemies";
+import { DEFS, ELITE_COLOR, Enemy, Hex, type EliteMod, type EnemyKind, type ShotStyle } from "./enemies";
 import { Butcher } from "./miniboss";
 import { itemIcon as shopIcon, itemName, MERCHANT_LINES, pick, Fountain, Shop, type ShopItem } from "./special";
 import { Fx } from "./fx";
@@ -965,7 +965,7 @@ export class Game {
 
   cutProjectiles(pos: THREE.Vector3, r: number) {
     for (const h of this.hexes) {
-      if (!h.alive || h.owner !== "enemy") continue;
+      if (!h.alive || h.owner !== "enemy" || h.lobbed) continue;
       if (Math.hypot(h.pos.x - pos.x, h.pos.z - pos.z) < r + 0.3) {
         h.burst(this);
         this.style.add("deflect", 40);
@@ -973,8 +973,8 @@ export class Game {
     }
   }
 
-  spawnHex(pos: THREE.Vector3, vel: THREE.Vector3, dmg: number) {
-    this.hexes.push(new Hex(this.scene, pos, vel, dmg));
+  spawnHex(pos: THREE.Vector3, vel: THREE.Vector3, dmg: number, style: ShotStyle = "needle", tel: Parameters<Fx["endTel"]>[0] | null = null) {
+    this.hexes.push(new Hex(this.scene, pos, vel, dmg, style, tel));
   }
 
   enemyAttack(src: Target, dmg: number, o: AttackOpts): AttackResult {

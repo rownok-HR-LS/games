@@ -1,10 +1,11 @@
 // DOM heads-up display, updated straight from the game loop (no React re-renders per frame).
 import * as THREE from "three";
-import type { Loadout } from "./boons";
+import { ELEMENT_COLOR, type Loadout } from "./boons";
 import type { Game } from "./game";
 import { MAG } from "./player";
 import { RANKS } from "./style";
 import { iconCanvas, ICON_COLOR, type IconKind } from "./textures";
+import { sigilSvg } from "./sigils";
 
 function el(tag: string, cls: string, parent?: HTMLElement, html = "") {
   const e = document.createElement(tag);
@@ -220,16 +221,19 @@ export class Hud {
 
   boons(l: Loadout) {
     this.boonRow.innerHTML = "";
-    const add = (icon: IconKind, title: string) => {
-      const c = iconCanvas(icon);
+    const add = (icon: IconKind, title: string, id: string, color = ICON_COLOR[icon]) => {
       const i = el("i", "", this.boonRow);
-      i.style.backgroundImage = `url(${c.toDataURL()})`;
-      i.style.borderColor = ICON_COLOR[icon];
+      const svg = sigilSvg(id);
+      if (svg) {
+        i.innerHTML = svg;
+        i.style.color = color;
+      } else i.style.backgroundImage = `url(${iconCanvas(icon).toDataURL()})`;
+      i.style.borderColor = color;
       i.title = title;
     };
-    for (const b of Object.values(l.slots)) if (b) add(b.element, `${b.name}: ${b.text}`);
-    for (const r of l.relics) add("relic", `${r.name}: ${r.boon} ${r.curse}`);
-    for (const m of l.moves) add("move", m);
+    for (const b of Object.values(l.slots)) if (b) add(b.element, `${b.name}: ${b.text}`, b.id, ELEMENT_COLOR[b.element]);
+    for (const r of l.relics) add("relic", `${r.name}: ${r.boon} ${r.curse}`, r.id, "#5dff9a");
+    for (const m of l.moves) add("move", m, m, "#ffffff");
   }
 
 /** Interaction hint above the hero (null hides it). */

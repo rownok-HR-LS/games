@@ -280,6 +280,37 @@ export class Audio {
     this.nz(t, 0.3, 0.2, "bandpass", 1200, 300, 2);
   }
 
+  /** Blood Demon needles: a wet, rising hiss. */
+  needles() {
+    if (!this.ok() || !this.gate("needles", 120)) return;
+    const t = this.now();
+    this.tone(t, "sawtooth", 900, 1800, 0.12, 0.05, 0.2);
+    this.nz(t, 0.18, 0.18, "highpass", 3000, 5000, 1.5, 0.2);
+  }
+
+  /** Hell Hound spit: a throaty hock and sizzle. */
+  spit() {
+    if (!this.ok() || !this.gate("spit", 120)) return;
+    const t = this.now();
+    this.tone(t, "square", 160, 70, 0.14, 0.08);
+    this.nz(t + 0.03, 0.35, 0.16, "bandpass", 2400, 900, 1.2, 0.2);
+  }
+
+  /** Minotaur hurl: a heavy grunt and whoosh. */
+  hurl() {
+    if (!this.ok() || !this.gate("hurl", 200)) return;
+    const t = this.now();
+    this.tone(t, "sawtooth", 110, 60, 0.3, 0.12, 0.3);
+    this.nz(t + 0.05, 0.5, 0.22, "lowpass", 600, 1800, 0.8, 0.3);
+  }
+
+  /** Cry Wolf spines: a dry rattling volley. */
+  spines() {
+    if (!this.ok() || !this.gate("spines", 120)) return;
+    const t = this.now();
+    for (let i = 0; i < 5; i++) this.nz(t + i * 0.025, 0.06, 0.14, "bandpass", 3600 - i * 300, 2000, 3);
+  }
+
   boom(size = 1) {
     if (!this.ok() || !this.gate("boom", 60)) return;
     const t = this.now();
