@@ -258,16 +258,16 @@ export class Fountain {
   }
 }
 
-/** The armoury at the start of a run: the four weapons on stone plinths. */
+/** The weapon racks in the Forsaken Stable, beside Krag: the four weapons on stone plinths. */
 export class Armoury {
   readonly group = new THREE.Group();
   readonly racks: { id: WeaponId; pos: THREE.Vector3; display: THREE.Group; light: THREE.PointLight; ring: THREE.Mesh }[] = [];
   private time = 0;
-  constructor() {
+  constructor(spots?: THREE.Vector3[]) {
     const stone = new THREE.MeshStandardMaterial({ color: 0x4a3e3a, roughness: 0.92 });
     const iron = new THREE.MeshStandardMaterial({ color: 0x2a2626, metalness: 0.85, roughness: 0.4 });
     WEAPON_ORDER.forEach((id, i) => {
-      const pos = new THREE.Vector3(-4.8 + i * 3.2, 0, -1.6 - Math.abs(i - 1.5) * 0.6);
+      const pos = spots?.[i]?.clone() ?? new THREE.Vector3(-4.8 + i * 3.2, 0, -1.6 - Math.abs(i - 1.5) * 0.6);
       const w = WEAPONS[id];
       const col = w.trail.clone().multiplyScalar(1.6);
       const base = new THREE.Group();

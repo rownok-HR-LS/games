@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Game, type Card, type Quality, type RunStats, type UiEvent } from "./game";
+import { Game, type Card, type HubView, type Quality, type RunStats, type UiEvent } from "./game";
 import type { Action } from "./input";
 import { CHANGES, CREDITS } from "./credits";
-import { loadModels, RUN_MODELS } from "./models";
+import { HUB_MODELS, loadModels, RUN_MODELS } from "./models";
+import { loadSave } from "./save";
 import { iconCanvas } from "./textures";
 import { sigilSvg } from "./sigils";
 
-type Screen = "title" | "intro" | "play" | "choose" | "paused" | "dead" | "victory";
+type Screen = "title" | "intro" | "play" | "choose" | "hub" | "paused" | "dead" | "victory";
+const ALL_MODELS = [...RUN_MODELS, ...HUB_MODELS];
 type Settings = { music: boolean; sfx: boolean; quality: Quality; blood: boolean };
 
 const STORY = [
@@ -35,16 +37,17 @@ export default function RiseOfStickman() {
   const hudRef = useRef<HTMLDivElement>(null);
   const game = useRef<Game | null>(null);
   const [screen, setScreen] = useState<Screen>("title");
-  const [choice, setChoice] = useState<{ title: string; cards: Card[]; lord?: boolean } | null>(null);
+  const [choice, setChoice] = useState<{ title: string; cards: Card[]; lord?: boolean; reroll?: number } | null>(null);
+  const [hubView, setHubView] = useState<HubView | null>(null);
   const [stats, setStats] = useState<RunStats | null>(null);
   const [bossCard, setBossCard] = useState<{ name: string; title: string } | null>(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [panel, setPanel] = useState<"none" | "controls" | "settings" | "credits">("none");
-  const [loaded, setLoaded] = useState<[number, number]>([0, RUN_MODELS.length]);
+  const [loaded, setLoaded] = useState<[number, number]>([0, ALL_MODELS.length]);
   const ready = loaded[0] >= loaded[1];
 
   useEffect(() => {
-    loadModels((d, t) => setLoaded([d, t])).catch(() => setLoaded([-1, RUN_MODELS.length]));
+    loadModels((d, t) => setLoaded([d, t]), ALL_MODELS).catch(() => setLoaded([-1, ALL_MODELS.length]));
   }, []);
   const [storyIdx, setStoryIdx] = useState(0);
   const [touch, setTouch] = useState(() => typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches);
@@ -57,8 +60,11 @@ export default function RiseOfStickman() {
     (window as unknown as { __ros: Game }).__ros = g;
     g.onUi = (e: UiEvent) => {
       if (e.type === "choose") {
-        setChoice({ title: e.title, cards: e.cards, lord: e.lord });
+        setChoice({ title: e.title, cards: e.cards, lord: e.lord, reroll: e.reroll });
         setScreen("choose");
+      } else if (e.type === "hub") {
+        setHubView(e.view);
+        setScreen(e.view ? "hub" : "play");
       } else if (e.type === "dead" || e.type === "victory") {
         setStats(e.stats);
         setScreen(e.type);
@@ -90,7 +96,7 @@ export default function RiseOfStickman() {
   useEffect(() => {
     const g = game.current;
     if (!g) return;
-    g.hud.show(screen === "play" || screen === "choose" || screen === "paused");
+    g.hud.show(screen === "play" || screen === "choose" || screen === "paused" || screen === "hub");
     if (screen === "title" || screen === "intro") g.audio.setCue("title");
   }, [screen]);
 
@@ -98,6 +104,7 @@ export default function RiseOfStickman() {
     const onKey = (e: KeyboardEvent) => {
       if (e.code !== "Escape" && e.code !== "KeyP") return;
       const g = game.current!;
+      if (screenRef.current === "hub") return g.hubAction("close");
       if (screenRef.current === "play") {
         g.setPaused(true);
         setScreen("paused");
@@ -125,20 +132,28 @@ export default function RiseOfStickman() {
       el.requestFullscreen?.().catch(() => {});
       (window.screen as unknown as { orientation?: { lock?: (o: string) => Promise<void> } }).orientation?.lock?.("landscape").catch(() => {});
     }
+    // The story panels only play before the very first run; after that you wake in the stable.
+    if (loadSave().runs > 0) {
+      g.enterHub();
+      setScreen("play");
+      return;
+    }
     setStoryIdx(0);
     setScreen("intro");
   }, [touch]);
 
+  /** Wake in the Forsaken Stable. */
   const startRun = useCallback(() => {
     const g = game.current!;
-    g.startRun();
+    g.enterHub();
     setScreen("play");
   }, []);
 
   const pick = (id: string) => {
-    game.current!.choose(id);
+    // Clear first: the game may open a new choice (e.g. after a gift) from inside choose().
     setChoice(null);
     setScreen("play");
+    game.current!.choose(id);
   };
 
   const resume = () => {
@@ -197,7 +212,7 @@ export default function RiseOfStickman() {
           {panel === "controls" && <Controls touch={touch} />}
           {panel === "settings" && <SettingsPanel s={settings} set={setSettings} />}
           {panel === "credits" && <Credits />}
-          <p className="ros-fine">Hard mode · Floor 1 of 4: the Bone Pits · Playable slice</p>
+          <p className="ros-fine">Hard mode · The Forsaken Stable + Floor 1 of 4: the Bone Pits</p>
         </div>
       )}
 
@@ -228,8 +243,15 @@ export default function RiseOfStickman() {
               </button>
             ))}
           </div>
+          {choice.reroll !== undefined && (
+            <button className="ros-btn ghost ros-reroll" onClick={() => game.current!.reroll()}>
+              ⟳ Reroll · {choice.reroll} left
+            </button>
+          )}
         </div>
       )}
+
+      {screen === "hub" && hubView && <HubPanel view={hubView} act={(id) => game.current!.hubAction(id)} />}
 
       {screen === "paused" && (
         <div className="ros-screen ros-pause">
@@ -238,7 +260,7 @@ export default function RiseOfStickman() {
             <button className="ros-btn primary" onClick={resume}>Resume</button>
             <button className="ros-btn" onClick={() => setPanel(panel === "controls" ? "none" : "controls")}>Controls</button>
             <button className="ros-btn" onClick={() => setPanel(panel === "settings" ? "none" : "settings")}>Settings</button>
-            <button className="ros-btn ghost" onClick={toTitle}>Abandon run</button>
+            <button className="ros-btn ghost" onClick={toTitle}>{game.current?.inHub ? "Quit to title" : "Abandon run"}</button>
           </div>
           {panel === "controls" && <Controls touch={touch} />}
           {panel === "settings" && <SettingsPanel s={settings} set={setSettings} />}
@@ -250,21 +272,161 @@ export default function RiseOfStickman() {
           <h2>{screen === "dead" ? "You Fell" : "The Bone Pits Are Yours"}</h2>
           <p className="ros-sub">
             {screen === "dead"
-              ? "The underworld keeps what it kills. Rise again."
+              ? "The underworld keeps what it kills, and gives you back to the Forsaken Stable."
               : "The Chained Cerberus is broken. The Drowned Cathedral waits above, in the next build."}
           </p>
           <div className="ros-stats">
             <div><b>{fmtTime(stats.time)}</b><span>Time</span></div>
             <div><b>{stats.kills}</b><span>Kills</span></div>
             <div><b>{stats.bestRank}</b><span>Best style</span></div>
-            <div><b>{stats.souls}</b><span>Souls</span></div>
+            <div><b>{stats.souls}</b><span>Souls banked</span></div>
+            <div><b>{stats.embers}</b><span>Embers</span></div>
           </div>
           <div className="ros-menu row">
-            <button className="ros-btn primary" onClick={startRun}>Rise again</button>
+            <button className="ros-btn primary" onClick={startRun}>Return to the Stable</button>
             <button className="ros-btn" onClick={toTitle}>Title</button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Panels in the Forsaken Stable: NPC dialogue, the Altar of Scars, prophecies, keepsakes. */
+function HubPanel({ view, act }: { view: HubView; act: (id: string) => void }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => setStep(0), [view]);
+  if (view.kind === "talk") {
+    const more = step < view.lines.length - 1;
+    return (
+      <div className="ros-screen ros-hub talk" onClick={() => more && setStep(step + 1)}>
+        <div className="ros-dialog" style={{ ["--c" as string]: view.color }}>
+          <div className="ros-dialog-name">
+            <b>{view.name}</b>
+            <small>{view.title}</small>
+          </div>
+          <p key={step}>{view.lines[step]}</p>
+          {more ? (
+            <span className="ros-dialog-more">▼</span>
+          ) : (
+            <div className="ros-dialog-opts">
+              {view.options.map((o) => (
+                <button key={o.id} className="ros-btn" disabled={o.disabled} onClick={(e) => { e.stopPropagation(); act(o.id); }}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+  const close = (
+    <button className="ros-btn ghost" onClick={() => act("close")}>
+      Close
+    </button>
+  );
+  if (view.kind === "altar")
+    return (
+      <div className="ros-screen ros-hub">
+        <h2>Altar of Scars</h2>
+        <p className="ros-sub">
+          Spend Embers on lasting scars. Each one has two sides. Only one side works at a time, and you can swap sides for free.
+          <b className="ros-embers">{view.embers} Embers</b>
+        </p>
+        <div className="ros-altar">
+          {view.rows.map((r) => (
+            <div className="ros-altar-row" key={r.id}>
+              {([r.a, r.b] as const).map((d, i) => {
+                const on = r.side === i;
+                const ab = i ? "b" : "a";
+                return (
+                  <div key={ab} className={`ros-scar${on ? " on" : ""}${d.rank ? " owned" : ""}`}>
+                    <div className="ros-scar-head">
+                      <b>{d.name}</b>
+                      <span className="ros-pips">
+                        {Array.from({ length: d.max }, (_, k) => (
+                          <i key={k} className={k < d.rank ? "on" : ""} />
+                        ))}
+                      </span>
+                    </div>
+                    <p>{d.text}</p>
+                    <div className="ros-scar-btns">
+                      {d.next !== null && (
+                        <button className={`ros-mini${view.embers >= d.next ? "" : " poor"}`} onClick={() => act(`altar:buy${ab}:${r.id}`)}>
+                          {d.rank ? "Rank up" : "Unlock"} · {d.next}
+                        </button>
+                      )}
+                      {!on && d.rank > 0 && (
+                        <button className="ros-mini" onClick={() => act(`altar:use${ab}:${r.id}`)}>
+                          Use this side
+                        </button>
+                      )}
+                      {on && d.rank > 0 && <span className="ros-active">Active</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        {close}
+      </div>
+    );
+  if (view.kind === "prophecies")
+    return (
+      <div className="ros-screen ros-hub">
+        <h2>The Seer&apos;s Prophecies</h2>
+        <p className="ros-sub">&ldquo;All of this has already happened. You just haven&apos;t been there yet.&rdquo;</p>
+        <div className="ros-prophecies">
+          {view.rows.map((p) => (
+            <div key={p.id} className={`ros-proph${p.done ? " done" : ""}${p.claimed ? " claimed" : ""}`}>
+              <div>
+                <b>{p.name}</b>
+                <em>{p.hint}</em>
+              </div>
+              <div className="ros-proph-side">
+                <small>{p.reward}</small>
+                {p.claimed ? (
+                  <span className="ros-active">Claimed</span>
+                ) : p.done ? (
+                  <button className="ros-mini gold" onClick={() => act(`proph:${p.id}`)}>
+                    Claim
+                  </button>
+                ) : (
+                  <span className="ros-prog">
+                    {p.goal > 1 ? `${p.progress} / ${p.goal}` : "Unfulfilled"}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        {close}
+      </div>
+    );
+  return (
+    <div className="ros-screen ros-hub">
+      <h2>Keepsakes</h2>
+      <p className="ros-sub">Wear one keepsake into each run. Give Grave Wine to Krag, the Seer, Ashmane, the Bone Merchant or a Fallen Lord to earn theirs. You have {view.wine} Grave Wine.</p>
+      <div className="ros-keepsakes">
+        {view.rows.map((k) => {
+          const on = view.equipped === k.id;
+          return (
+            <button key={k.id} className={`ros-ks${k.owned ? "" : " locked"}${on ? " on" : ""}`} style={{ ["--c" as string]: k.color }} disabled={!k.owned} onClick={() => act(on ? "ks:none" : `ks:${k.id}`)}>
+              <b>{k.owned ? k.name : "???"}</b>
+              <p>{k.owned ? k.text : `Gift from ${k.from.startsWith("lord_") ? "a Fallen Lord" : k.from === "krag" ? "Old Krag" : k.from === "seer" ? "the Hollow Seer" : k.from === "steed" ? "Ashmane" : "the Bone Merchant"}`}</p>
+              {on && <span className="ros-active">Worn</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div className="ros-menu row">
+        <button className="ros-btn primary" onClick={() => act("ride")}>
+          Ride out
+        </button>
+        {close}
+      </div>
     </div>
   );
 }
@@ -328,7 +490,7 @@ function Controls({ touch }: { touch: boolean }) {
           <li><b>Right click (hold)</b> Twin revolvers · <b>R</b> Reload, and press again in the gold zone for a perfect reload</li>
           <li><b>Space</b> Shadow dash · click right after = <i>Rift Cut</i></li>
           <li><b>Shift</b> Parry when an enemy flashes red → execution</li>
-          <li><b>Q</b> Wrath form · <b>E</b> Crimson Cyclone · <b>F</b> Buy / drink · <b>Esc</b> Pause</li>
+          <li><b>Q</b> Wrath form · <b>E</b> Weapon special · <b>F</b> Talk / use / buy · <b>Esc</b> Pause</li>
         </ul>
       )}
       <p>Mix sword, guns, dodges and parries to raise your <b>style rank</b> (D → SSS). Getting hit drops it.</p>

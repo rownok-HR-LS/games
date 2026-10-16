@@ -47,17 +47,28 @@ import type { EnemyBar, Marker } from "./hud";
 import { doorIcon } from "./boons";
 import type { AttackOpts, AttackResult, Hit, Target } from "./types";
 import { buildMedal, medalTexture, Room } from "./world";
+import { HUB_AVOID, HUB_SIZE, RACK_SPOTS, Stable, type HubSpotId } from "./hub";
+import { ALTAR, altarRanks, KEEPSAKES, keepsakeFrom, keepsakeOf, metaOf, payoutText, PROPHECIES, prophecyDone, type Meta, type Payout } from "./meta";
+import { FIRST_WAKE, GIFT_LINES, idleLine, NPC, reaction, STORY, type NpcId } from "./story";
 
 /** Chambers per floor: the last is the Warden (boss); the mini-boss waits halfway; the one before the boss is always merchant-or-fountain. */
 export const FLOOR_ROOMS = 12;
 export const MINIBOSS_ROOM = 6;
 export type Card = { id: string; name: string; text: string; icon: IconKind; color: string; tag: string; note?: string; rarity?: string };
+export type HubOption = { id: string; label: string; disabled?: boolean };
+export type AltarSideRow = { name: string; text: string; rank: number; max: number; next: number | null };
+export type HubView =
+  | { kind: "talk"; name: string; title: string; lines: string[]; options: HubOption[]; color: string }
+  | { kind: "altar"; embers: number; rows: { id: string; side: 0 | 1; a: AltarSideRow; b: AltarSideRow }[] }
+  | { kind: "prophecies"; rows: { id: string; name: string; hint: string; reward: string; progress: number; goal: number; done: boolean; claimed: boolean }[] }
+  | { kind: "keepsakes"; equipped: string | null; wine: number; rows: { id: string; name: string; text: string; color: string; owned: boolean; from: string }[] };
 export type UiEvent =
-  | { type: "choose"; title: string; cards: Card[]; lord?: boolean }
+  | { type: "choose"; title: string; cards: Card[]; lord?: boolean; reroll?: number }
+  | { type: "hub"; view: HubView | null }
   | { type: "dead"; stats: RunStats }
   | { type: "victory"; stats: RunStats }
   | { type: "bossIntro"; name: string; title: string };
-export type RunStats = { time: number; kills: number; souls: number; bestRank: string; rooms: number };
+export type RunStats = { time: number; kills: number; souls: number; bestRank: string; rooms: number; embers: number };
 export type Quality = "high" | "low";
 
 type Debris = {
@@ -109,6 +120,21 @@ export class Game {
   boss: Boss | Butcher | null = null;
   private shop: Shop | null = null;
   private armoury: Armoury | null = null;
+  /** The Forsaken Stable (hub between runs). */
+  private stable: Stable | null = null;
+  private rideT = -1;
+  /** Altar of Scars + keepsake effects for this run. */
+  meta: Meta = metaOf(loadSave());
+  private baseHp = 100;
+  rerolls = 0;
+  private reroller: (() => void) | null = null;
+  private lastOffer: { title: string; cards: Card[] } | null = null;
+  private doorsRandom = false;
+  private firstBlessing = false;
+  private defianceUsed = false;
+  private wineDoors = 0;
+  private runEmbers = 0;
+  lastHurtBy = "the pit itself";
   /** Progress kept between runs. */
   save: SaveData = loadSave();
   private banked = false;
@@ -131,7 +157,7 @@ export class Game {
   private plan: DoorPlan = { type: "combat", reward: null };
   private waves: { kind: EnemyKind; elite: EliteMod | null }[][] = [];
   private waveDelay = 0;
-  private phase: "fight" | "killcam" | "loot" | "doors" | "fade" | "bossIntro" | "over" = "fight";
+  private phase: "fight" | "killcam" | "loot" | "doors" | "fade" | "bossIntro" | "over" | "hub" = "fight";
   private phaseT = 0;
   /** Room reward pickup: a floating medallion showing the reward's symbol. */
   private orb: THREE.Group | null = null;
@@ -219,6 +245,7 @@ export class Game {
     this.player = new Player(this);
     this.style.onRank = (r, up) => {
       if (up) this.audio.rankUp(r);
+      if (up && r >= RANKS.length - 1 && this.running) this.note("sss");
       this.hud.rank(r, up);
     };
     this.resizeObs = new ResizeObserver(() => this.resize());
@@ -262,14 +289,105 @@ export class Game {
   }
 
   // ── Run flow ────────────────────────────────────────────────────────────────────────
+  /** Wake in the Forsaken Stable (after a death, a win, or from the title). */
+  enterHub() {
+    this.clearRoom();
+    this.save = loadSave();
+    this.meta = metaOf(this.save);
+    this.roomNo = 0;
+    this.plan = { type: "armoury", reward: null };
+    this.loadout = new Loadout();
+    this.mods = this.computeMods();
+    this.baseHp = 100 + this.meta.hp;
+    this.player.maxHp = this.player.hp = this.baseHp;
+    this.player.defiance = this.player.defianceMax = 1 + this.meta.defiance;
+    this.player.wrath = 0;
+    this.player.wrathT = 0;
+    this.player.model.setWrath(false);
+    this.player.ammo = MAG;
+    this.player.reloading = false;
+    this.player.setWeapon(this.save.weapon, this.save.aspect[this.save.weapon]);
+    this.souls = 0;
+    this.coins = 0;
+    this.style.reset();
+    this.hud.boons(this.loadout);
+    this.room = new Room(5, { doors: 0, hub: true, size: HUB_SIZE, avoid: HUB_AVOID });
+    this.scene.add(this.room.group);
+    this.fitShadow();
+    this.stable = new Stable();
+    this.scene.add(this.stable.group);
+    this.room.pillars.push(...this.stable.blockers);
+    this.armoury = new Armoury(RACK_SPOTS);
+    this.scene.add(this.armoury.group);
+    for (const r of this.armoury.racks) this.room.pillars.push({ x: r.pos.x, z: r.pos.z, r: 0.75 });
+    this.player.spawn(2.6, 3.6, Math.atan2(-1, -1));
+    this.focus.copy(this.player.pos);
+    this.zoom = this.zoomTarget = 1;
+    this.focusOverride = null;
+    this.waves = [];
+    this.phase = "hub";
+    this.phaseT = 0;
+    this.rideT = -1;
+    this.hud.mode(true);
+    this.hud.room("The Forsaken Stable");
+    this.hud.boss(null, 0);
+    this.audio.setCue("title");
+    this.paused = false;
+    this.running = true;
+    this.audio.unlock();
+    if (this.save.runs === 0 && !this.save.talkRun.seer) this.hud.say(NPC.seer.name, FIRST_WAKE);
+    else {
+      const ready = PROPHECIES.filter((p) => prophecyDone(this.save, p) && !this.save.claimed.includes(p.id)).length;
+      if (ready) this.hud.toast(`${ready} PROPHEC${ready > 1 ? "IES" : "Y"} TO CLAIM AT THE SEER`, "#c9b6ff");
+    }
+    this.updateCamera(1);
+  }
+
+  /** The run's mods: blessings and relics, plus the Altar of Scars. */
+  private computeMods() {
+    const m = this.loadout.mods();
+    m.dmg *= this.meta.dmg;
+    m.dashCharges += this.meta.dash;
+    m.wrathGain *= this.meta.wrath;
+    if (this.meta.ghost) m.dodgeWindow *= 2;
+    return m;
+  }
+
+  private fitShadow() {
+    const s = Math.max(this.room.hx, this.room.hz) + 3;
+    const sc = this.key.shadow.camera;
+    sc.left = -s;
+    sc.right = s;
+    sc.top = s;
+    sc.bottom = -s;
+    sc.far = 60;
+    sc.updateProjectionMatrix();
+    this.key.target.position.set(0, 0, 0);
+  }
+
+  get inHub() {
+    return !!this.stable;
+  }
+
+  /** Ride out from the stable into the Bone Pits. */
   startRun() {
+    this.save = loadSave();
+    this.meta = metaOf(this.save);
+    this.save.runs++;
+    writeSave(this.save);
     this.loadout = new Loadout();
     this.anvils = 0;
-    this.mods = this.loadout.mods();
-    this.player.maxHp = 100;
-    this.player.hp = 100;
-    this.player.defiance = this.player.defianceMax = 1;
-    this.player.wrath = 0;
+    this.wineDoors = 0;
+    this.runEmbers = 0;
+    this.firstBlessing = false;
+    this.defianceUsed = false;
+    this.rerolls = this.meta.rerolls;
+    this.mods = this.computeMods();
+    this.baseHp = 100 + this.meta.hp;
+    this.player.maxHp = this.baseHp;
+    this.player.hp = this.baseHp;
+    this.player.defiance = this.player.defianceMax = 1 + this.meta.defiance;
+    this.player.wrath = this.meta.burning ? 50 : 0;
     this.player.wrathT = 0;
     this.player.model.setWrath(false);
     this.player.ammo = MAG;
@@ -278,15 +396,18 @@ export class Game {
     this.style.reset();
     this.style.best = 0;
     this.souls = 0;
-    this.coins = 0;
+    this.coins = this.meta.coins;
     this.kills = 0;
     this.runTime = 0;
     this.shopSeen = false;
     this.hud.boons(this.loadout);
-    this.save = loadSave();
     this.banked = false;
     this.player.setWeapon(this.save.weapon, this.save.aspect[this.save.weapon]);
-    this.buildRoom(0, { type: "armoury", reward: null });
+    this.hud.mode(false);
+    const first = this.meta.sigil ?? ELEMENTS[(Math.random() * ELEMENTS.length) | 0];
+    this.buildRoom(1, { type: "combat", reward: { kind: "blessing", element: first } });
+    const ks = keepsakeOf(this.meta.keepsake);
+    if (ks) this.hud.toast(`KEEPSAKE: ${ks.name.toUpperCase()}`, ks.color);
     this.paused = false;
     this.running = true;
     this.audio.unlock();
@@ -298,7 +419,7 @@ export class Game {
   }
 
   private stats(): RunStats {
-    return { time: this.runTime, kills: this.kills, souls: Math.round(this.souls), bestRank: RANKS[this.style.best].letter, rooms: this.roomNo };
+    return { time: this.runTime, kills: this.kills, souls: Math.round(this.souls * this.meta.souls), bestRank: RANKS[this.style.best].letter, rooms: this.roomNo, embers: this.runEmbers };
   }
 
   private clearRoom() {
@@ -324,6 +445,11 @@ export class Game {
     if (this.fountain) this.scene.remove(this.fountain.group);
     if (this.armoury) this.scene.remove(this.armoury.group);
     this.armoury = null;
+    if (this.stable) {
+      this.scene.remove(this.stable.group);
+      this.stable.dispose();
+    }
+    this.stable = null;
     this.shop = null;
     this.fountain = null;
     this.hud.prompt(null);
@@ -351,15 +477,7 @@ export class Game {
     const traps = fight && no >= 2 ? Math.min(5, 2 + Math.floor(no / 3)) : type === "miniboss" ? 3 : 0;
     this.room = new Room(no * 31 + Math.floor(Math.random() * 1000), { boss: type === "boss", doors, traps, small: visit });
     this.scene.add(this.room.group);
-    const s = Math.max(this.room.hx, this.room.hz) + 3;
-    const sc = this.key.shadow.camera;
-    sc.left = -s;
-    sc.right = s;
-    sc.top = s;
-    sc.bottom = -s;
-    sc.far = 60;
-    sc.updateProjectionMatrix();
-    this.key.target.position.set(0, 0, 0);
+    this.fitShadow();
     this.player.spawn(this.room.hx - 2.2, this.room.hz - 2.2, Math.atan2(-1, -1));
     this.fx.ring(this.player.pos, 0.2, 2, new THREE.Color(2, 0.2, 0.1), 0.6);
     this.focus.copy(this.player.pos);
@@ -529,8 +647,21 @@ export class Game {
         if (this.phaseT > 1.5 && this.running) {
           this.running = false;
           this.audio.setCue("title");
-          this.bankSouls();
+          this.endRun("won", "");
           this.onUi({ type: "victory", stats: this.stats() });
+        }
+        break;
+      case "hub":
+        if (this.rideT < 0) this.updateInteract();
+        else {
+          this.rideT += real;
+          this.hud.prompt(null);
+          if (this.rideT > 1.0 && this.rideT - real <= 1.0) this.hud.fade(true);
+          if (this.rideT > 1.6) {
+            this.rideT = -1;
+            this.startRun();
+            this.hud.fade(false);
+          }
         }
         break;
     }
@@ -541,6 +672,10 @@ export class Game {
     this.phaseT = 0;
     this.style.add("clear", 40);
     if (this.plan.type === "elite") this.addCoins(35, new THREE.Vector3(0, 0, 0));
+    if (this.meta.bloodDebt && this.player.hp < this.player.maxHp) {
+      this.healFlat(this.meta.bloodDebt);
+      this.fx.ring(this.player.pos, 0.2, 1.4, new THREE.Color(1.6, 0.1, 0.15), 0.35);
+    }
     if (this.boss && !this.boss.final) this.boss = null;
     const r = this.plan.reward;
     if (!r) return this.openDoors();
@@ -605,6 +740,7 @@ export class Game {
         return this.offer(
           "Cursed Relic",
           this.loadout.offerRelics().map((x) => ({ id: x.id, name: x.name, text: `${x.boon} ${x.curse}`, icon: "relic" as IconKind, color: "#5dff9a", tag: "Cursed relic", note: x.curse })),
+          () => this.grant(r),
         );
       case "anvil": {
         const w = this.player.w;
@@ -612,20 +748,39 @@ export class Game {
         return this.offer(
           "Soul Anvil",
           ups.map((u) => ({ id: `anv:${u.id}`, name: u.name, text: u.text, icon: "anvil" as IconKind, color: "#c57bff", rarity: "#c57bff", tag: `Soul Anvil · ${w.name}` })),
+          () => this.grant(r),
         );
       }
       case "move":
         return this.offer(
           "New Move",
           this.loadout.offerMoves().map((x) => ({ id: x.id, name: x.name, text: x.text, icon: "move" as IconKind, color: "#ffffff", tag: "Move" })),
+          () => this.grant(r),
         );
+      case "embers":
+        this.gainEmbers(r.amount);
+        return this.afterChoice();
+      case "wine":
+        this.save.wine++;
+        writeSave(this.save);
+        this.hud.toast("+1 GRAVE WINE", "#c03aff");
+        return this.afterChoice();
     }
   }
 
-  private offerBlessings(el: Element, min: Rarity) {
+  /** Embers go straight to the bank (kept even if you die). */
+  private gainEmbers(n: number) {
+    this.save.embers += n;
+    this.runEmbers += n;
+    writeSave(this.save);
+    this.hud.toast(`+${n} EMBERS`, "#ff6a2a");
+  }
+
+  private offerBlessings(el: Element, min0: Rarity) {
     this.pendingRarity.clear();
-    const cards = this.loadout.offerBlessings(el).map((b) => {
-      const rarity = rollRarity(min);
+    const min: Rarity = !this.firstBlessing && this.meta.keepsake === "blind_eye" && min0 === "common" ? "rare" : min0;
+    const cards: Card[] = this.loadout.offerBlessings(el).map((b) => {
+      const rarity = rollRarity(min, this.meta.favour);
       this.pendingRarity.set(b.id, rarity);
       const owned = b.kind ? undefined : this.loadout.slots[b.slot];
       if (b.kind) {
@@ -652,7 +807,12 @@ export class Game {
         note: owned ? `Replaces ${owned.name}` : undefined,
       };
     });
-    this.offer(`Blessing of ${LORDS[el].name}, ${LORDS[el].title}`, cards);
+    const gift = `lord_${el}`;
+    if (this.save.wine > 0 && !this.save.gifted.includes(gift)) {
+      const k = keepsakeFrom(gift);
+      cards.push({ id: `gift:${gift}`, name: "Offer Grave Wine", text: `Give ${LORDS[el].name} a bottle of Grave Wine and receive the ${k.name}: ${k.text}`, icon: "wine", color: "#c03aff", rarity: "#c03aff", tag: `Gift · ${this.save.wine} bottle${this.save.wine > 1 ? "s" : ""}`, note: "Then choose your blessing" });
+    }
+    this.offer(`Blessing of ${LORDS[el].name}, ${LORDS[el].title}`, cards, () => this.offerBlessings(el, min0));
   }
 
   private offerLevelUp() {
@@ -672,7 +832,9 @@ export class Game {
     );
   }
 
-  private offer(title: string, cards: Card[]) {
+  private offer(title: string, cards: Card[], reroll?: () => void) {
+    this.reroller = reroll ?? null;
+    this.lastOffer = { title, cards };
     if (!cards.length) {
       this.lord?.dismiss();
       this.releaseLordCam();
@@ -681,12 +843,28 @@ export class Game {
     }
     this.setPaused(true);
     this.hud.markers([]);
-    this.onUi({ type: "choose", title, cards, lord: !!this.lord });
+    this.onUi({ type: "choose", title, cards, lord: !!this.lord, reroll: this.reroller && this.rerolls > 0 ? this.rerolls : undefined });
+  }
+
+  /** Second Chance: roll the cards again. */
+  reroll() {
+    if (!this.reroller || this.rerolls <= 0) return;
+    this.rerolls--;
+    this.audio.ui();
+    this.hud.toast(`REROLLED · ${this.rerolls} LEFT`, "#ffd24a");
+    this.reroller();
   }
 
   /** Called by the UI when a card is picked. */
   choose(id: string) {
+    if (id.startsWith("gift:")) {
+      const giver = id.slice(5);
+      this.giftTo(giver);
+      const left = this.lastOffer!.cards.filter((c) => c.id !== id);
+      return this.offer(this.lastOffer!.title, left, this.reroller ?? undefined);
+    }
     if (id.startsWith("anv:")) {
+      this.note("anvil");
       this.loadout.anvil.add(id.slice(4));
       this.player.refreshWeapon();
       this.audio.buy();
@@ -704,7 +882,13 @@ export class Game {
     const b = ALL_BLESSINGS.find((x) => x.id === id);
     const rl = RELICS.find((x) => x.id === id);
     const mv = MOVES.find((x) => x.id === id);
-    if (b) this.loadout.take(b, this.pendingRarity.get(id) ?? "common");
+    if (b) {
+      this.loadout.take(b, this.pendingRarity.get(id) ?? "common");
+      if (!b.kind && !this.firstBlessing && this.meta.emberHeart) this.loadout.levelUp(b.id);
+      this.firstBlessing = true;
+      if (b.kind === "duo") this.note("duo");
+      if (b.kind === "legend") this.note("legend");
+    }
     if (this.lord && b) {
       this.lord.dismiss();
       this.releaseLordCam();
@@ -713,8 +897,8 @@ export class Game {
     if (rl) this.loadout.relics.push(rl);
     if (mv) this.loadout.moves.add(mv.id);
     const oldMax = this.player.maxHp;
-    this.mods = this.loadout.mods();
-    this.player.maxHp = Math.round(100 * this.mods.maxHp);
+    this.mods = this.computeMods();
+    this.player.maxHp = Math.round(this.baseHp * this.mods.maxHp);
     if (this.player.maxHp < oldMax) this.player.hp = Math.min(this.player.hp, this.player.maxHp);
     this.hud.boons(this.loadout);
     this.audio.pickup();
@@ -725,6 +909,11 @@ export class Game {
   /** A Fallen Lord rises in front of the hero, speaks, then `then` runs (opens the blessing cards). */
   private summonLord(el: Element, then: () => void) {
     this.removeLord();
+    if (!this.save.lordsMet.includes(el)) {
+      this.save.lordsMet.push(el);
+      writeSave(this.save);
+      this.checkProphecies();
+    }
     const p = this.player.pos;
     const at = new THREE.Vector3(p.x * 0.6, 0, Math.max(-9, p.z - 3.4));
     this.lord = new LordApparition(el, at, p);
@@ -797,6 +986,7 @@ export class Game {
     items.push(this.loadout.owned().length ? { kind: "ember", price: 110 } : { kind: "relic", price: 120 });
     if (this.player.defiance < this.player.defianceMax) items.push({ kind: "defiance", price: 200 });
     else items.push(Math.random() < 0.5 ? { kind: "move", price: 130 } : { kind: "relic", price: 120 });
+    for (const it of items) it.price = Math.round(it.price * this.meta.haggle);
     return items;
   }
 
@@ -804,6 +994,22 @@ export class Game {
     const p = this.player.pos;
     let prompt: string | null = null;
     let act: (() => void) | null = null;
+    let best = Infinity;
+    if (this.stable)
+      for (const s of this.stable.spots) {
+        const d = Math.hypot(p.x - s.pos.x, p.z - s.pos.z);
+        if (d > s.r || d / s.r > best) continue;
+        best = d / s.r;
+        prompt = { krag: "Talk to Old Krag", seer: "Talk to the Hollow Seer", steed: "Ashmane: ride out", altar: "The Altar of Scars" }[s.id];
+        act = () => this.useSpot(s.id);
+      }
+    if (this.shop && this.save.wine > 0 && !this.save.gifted.includes("merchant") && Math.hypot(p.x - this.shop.merchantPos.x, p.z - (this.shop.merchantPos.z + 1.3)) < 1.8) {
+      prompt = "Give the Bone Merchant a bottle of Grave Wine";
+      act = () => {
+        this.giftTo("merchant");
+        this.merchantSay(GIFT_LINES.merchant);
+      };
+    }
     if (this.shop) {
       this.shop.items.forEach((it, i) => {
         if (it.sold || Math.hypot(p.x - it.pos.x, p.z - it.pos.z) > 1.7) return;
@@ -813,7 +1019,9 @@ export class Game {
     }
     if (this.armoury)
       for (const r of this.armoury.racks) {
-        if (Math.hypot(p.x - r.pos.x, p.z - r.pos.z) > 1.8) continue;
+        const d = Math.hypot(p.x - r.pos.x, p.z - r.pos.z);
+        if (d > 1.8 || d / 1.8 > best) continue;
+        best = d / 1.8;
         prompt = r.id === this.player.w.id ? `${WEAPONS[r.id].name}: choose aspect` : `Take the ${WEAPONS[r.id].name}`;
         act = () => this.openAspects(r.id);
       }
@@ -825,8 +1033,227 @@ export class Game {
         this.heal(0.4);
       };
     }
+    // Second Chance: reroll the doors.
+    if (!prompt && this.phase === "doors" && this.doorsRandom && this.rerolls > 0 && this.room.doors.some((d) => d.open && Math.hypot(p.x - d.pos.x, p.z - d.pos.z) < 5.5)) {
+      prompt = `Reroll the doors (${this.rerolls} left)`;
+      act = () => {
+        this.rerolls--;
+        this.audio.ui();
+        this.hud.toast(`DOORS REROLLED · ${this.rerolls} LEFT`, "#ffd24a");
+        this.openDoors();
+      };
+    }
     this.hud.prompt(prompt);
     if (act && this.input.pressed.has("interact")) (act as () => void)();
+  }
+
+  // ── The Forsaken Stable ─────────────────────────────────────────────────────────────
+  private useSpot(id: HubSpotId) {
+    this.audio.ui();
+    if (id === "altar") return this.showHub(this.altarView());
+    this.openTalk(id);
+  }
+
+  private showHub(view: HubView) {
+    this.setPaused(true);
+    this.hud.prompt(null);
+    this.hud.markers([]);
+    this.onUi({ type: "hub", view });
+  }
+
+  private closeHub() {
+    this.setPaused(false);
+    this.onUi({ type: "hub", view: null });
+  }
+
+  /** An NPC speaks: a reaction to the last run plus the next piece of the story, or an idle line. */
+  private openTalk(npc: NpcId, extra?: string) {
+    const s = this.save;
+    const lines: string[] = [];
+    if (extra) lines.push(extra);
+    else if ((s.talkRun[npc] ?? -1) < s.runs) {
+      if (s.talkRun[npc] !== undefined) {
+        const r = reaction(npc, s.last);
+        if (r) lines.push(r);
+      }
+      const i = s.talk[npc] ?? 0;
+      if (i < STORY[npc].length) {
+        lines.push(STORY[npc][i]);
+        s.talk[npc] = i + 1;
+      }
+      s.talkRun[npc] = s.runs;
+      writeSave(s);
+    }
+    if (!lines.length) lines.push(idleLine(npc));
+    this.stable?.talk(npc);
+    const opts: HubOption[] = [];
+    if (npc === "steed") opts.push({ id: "ride", label: "Ride out into the Bone Pits" }, { id: "view:keepsakes", label: "Keepsakes" });
+    if (npc === "seer") {
+      const ready = PROPHECIES.filter((p) => prophecyDone(s, p) && !s.claimed.includes(p.id)).length;
+      opts.push({ id: "view:prophecies", label: `Prophecies${ready ? ` (${ready} to claim)` : ""}` });
+    }
+    if (!s.gifted.includes(npc)) opts.push({ id: `gift:${npc}`, label: s.wine > 0 ? `Give Grave Wine (${s.wine})` : "Give Grave Wine (you have none)", disabled: s.wine <= 0 });
+    opts.push({ id: "close", label: "Leave" });
+    const color = { krag: "#ff9a4a", seer: "#c9b6ff", steed: "#7fd8ff" }[npc];
+    this.showHub({ kind: "talk", name: NPC[npc].name, title: NPC[npc].title, lines, options: opts, color });
+  }
+
+  /** Give a bottle of Grave Wine; the giver hands over their keepsake. */
+  private giftTo(giver: string) {
+    const s = this.save;
+    if (s.wine <= 0 || s.gifted.includes(giver)) return;
+    const k = keepsakeFrom(giver);
+    s.wine--;
+    s.gifted.push(giver);
+    if (!s.keepsakes.includes(k.id)) s.keepsakes.push(k.id);
+    writeSave(s);
+    this.audio.buy();
+    this.hud.toast(`KEEPSAKE: ${k.name.toUpperCase()}`, k.color);
+  }
+
+  private altarView(): HubView {
+    const s = this.save;
+    const side = (id: string, i: 0 | 1) => {
+      const slot = ALTAR.find((x) => x.id === id)!;
+      const d = i ? slot.b : slot.a;
+      const rank = altarRanks(s, id)[i];
+      return { name: d.name, text: d.text(rank || 1), rank, max: d.costs.length, next: rank < d.costs.length ? d.costs[rank] : null };
+    };
+    return { kind: "altar", embers: s.embers, rows: ALTAR.map((a) => ({ id: a.id, side: s.altarSide[a.id] ?? 0, a: side(a.id, 0), b: side(a.id, 1) })) };
+  }
+
+  private prophecyView(): HubView {
+    const s = this.save;
+    return {
+      kind: "prophecies",
+      rows: PROPHECIES.map((p) => ({ id: p.id, name: p.name, hint: p.hint, reward: payoutText(p.reward), progress: Math.min(p.goal, p.progress(s)), goal: p.goal, done: prophecyDone(s, p), claimed: s.claimed.includes(p.id) })),
+    };
+  }
+
+  private keepsakeView(): HubView {
+    const s = this.save;
+    return { kind: "keepsakes", equipped: s.keepsake, wine: s.wine, rows: KEEPSAKES.map((k) => ({ ...k, owned: s.keepsakes.includes(k.id) })) };
+  }
+
+  /** A button in a hub panel. */
+  hubAction(id: string) {
+    const s = this.save;
+    const [a, b, c] = id.split(":");
+    if (id === "close") return this.closeHub();
+    if (id === "ride") {
+      this.closeHub();
+      this.rideT = 0;
+      this.stable?.rideOut();
+      this.audio.door();
+      this.hud.say(NPC.steed.name, "Ashmane rears, blue fire roaring from her mane.");
+      return;
+    }
+    if (a === "view") return this.showHub(b === "keepsakes" ? this.keepsakeView() : b === "prophecies" ? this.prophecyView() : this.altarView());
+    if (a === "gift") {
+      this.giftTo(b);
+      return this.openTalk(b as NpcId, GIFT_LINES[b]);
+    }
+    if (a === "altar") {
+      const slot = ALTAR.find((x) => x.id === c)!;
+      const i = (b === "buyb" || b === "useb" ? 1 : 0) as 0 | 1;
+      if (b === "buya" || b === "buyb") {
+        const ranks = altarRanks(s, c);
+        const costs = (i ? slot.b : slot.a).costs;
+        const cost = costs[ranks[i]];
+        if (cost === undefined) return;
+        if (s.embers < cost) {
+          this.audio.deny();
+          this.hud.toast(`NEED ${cost - s.embers} MORE EMBERS`, "#8a6a6a");
+          return this.showHub(this.altarView());
+        }
+        s.embers -= cost;
+        const next: [number, number] = [ranks[0], ranks[1]];
+        next[i]++;
+        s.altar[c] = next;
+        s.altarSide[c] = i;
+        this.audio.buy();
+        this.fx.ring(new THREE.Vector3(-1.8, 0.1, -7.7), 0.4, 3, new THREE.Color(2, 0.1, 0.1), 0.5);
+      } else s.altarSide[c] = i;
+      writeSave(s);
+      this.applyHubMeta();
+      return this.showHub(this.altarView());
+    }
+    if (a === "proph") {
+      const p = PROPHECIES.find((x) => x.id === b);
+      if (!p || !prophecyDone(s, p) || s.claimed.includes(p.id)) return;
+      s.claimed.push(p.id);
+      this.pay(p.reward);
+      this.audio.pickup();
+      return this.showHub(this.prophecyView());
+    }
+    if (a === "ks") {
+      s.keepsake = b === "none" ? null : b;
+      writeSave(s);
+      this.applyHubMeta();
+      this.audio.ui();
+      return this.showHub(this.keepsakeView());
+    }
+  }
+
+  private pay(r: Payout) {
+    const s = this.save;
+    if (r.embers) s.embers += r.embers;
+    if (r.souls) s.souls += r.souls;
+    if (r.wine) s.wine += r.wine;
+    writeSave(s);
+    this.hud.toast(`+${payoutText(r).toUpperCase()}`, "#c9b6ff");
+  }
+
+  /** Show Altar / keepsake changes on the hero right away in the stable. */
+  private applyHubMeta() {
+    this.meta = metaOf(this.save);
+    this.mods = this.computeMods();
+    this.baseHp = 100 + this.meta.hp;
+    this.player.maxHp = this.player.hp = this.baseHp;
+    this.player.defiance = this.player.defianceMax = 1 + this.meta.defiance;
+  }
+
+  // ── Prophecy bookkeeping ──
+  note(flag: string) {
+    if (this.save.flags.includes(flag)) return;
+    this.save.flags.push(flag);
+    writeSave(this.save);
+    this.checkProphecies();
+  }
+
+  private bump(counter: string, n = 1) {
+    this.save.counts[counter] = (this.save.counts[counter] ?? 0) + n;
+    this.checkProphecies();
+    writeSave(this.save);
+  }
+
+  private checkProphecies() {
+    for (const p of PROPHECIES) {
+      if (this.save.told.includes(p.id) || !prophecyDone(this.save, p)) continue;
+      this.save.told.push(p.id);
+      writeSave(this.save);
+      this.hud.toast(`PROPHECY FULFILLED: ${p.name.toUpperCase()}`, "#c9b6ff");
+    }
+  }
+
+  /** Who hit the hero last (for the NPCs' reactions). */
+  noteHurt(src: Target | null) {
+    this.lastHurtBy = src instanceof Enemy ? DEFS[src.kind].name : ((src as { name?: string } | null)?.name ?? "the pit itself");
+  }
+
+  /** Bank souls and record how the run ended. */
+  private endRun(result: "dead" | "won", by: string) {
+    if (this.banked) return;
+    this.bankSouls();
+    const s = this.save;
+    if (result === "dead") s.deaths++;
+    else {
+      s.wins++;
+      if (!this.defianceUsed) s.flags.includes("flawless") || s.flags.push("flawless");
+    }
+    s.last = { result, by, room: this.roomNo, weapon: this.player.w.id };
+    writeSave(s);
+    this.checkProphecies();
   }
 
   /** The three aspects of a weapon as cards (locked ones show their price). */
@@ -864,6 +1291,7 @@ export class Game {
       this.save.souls -= a.cost;
       this.save.unlocked.push(aid);
       this.hud.toast("ASPECT UNLOCKED", "#ffd24a");
+      this.note("aspect");
     }
     this.equip(a.weapon, aid);
   }
@@ -885,7 +1313,7 @@ export class Game {
   private bankSouls() {
     if (this.banked) return;
     this.banked = true;
-    const n = Math.floor(this.souls);
+    const n = Math.floor(this.souls * this.meta.souls);
     this.save.souls += n;
     writeSave(this.save);
     if (n > 0) this.hud.toast(`+${n} SOULS BANKED`, "#7fd8ff");
@@ -923,6 +1351,7 @@ export class Game {
     this.phase = "doors";
     this.phaseT = 0;
     const doors = this.room.doors;
+    this.doorsRandom = false;
     if (!doors.length) return;
     this.audio.door();
     const next = this.roomNo + 1;
@@ -934,6 +1363,7 @@ export class Game {
       if (doors[1]) this.room.openDoor(doors[1], { type: "fountain", reward: null });
       return;
     }
+    this.doorsRandom = true;
     const used = new Set<string>();
     let abyss = false;
     let shop = false;
@@ -970,6 +1400,12 @@ export class Game {
       return { kind: "anvil" };
     }
     if (type === "abyss") return Math.random() < 0.7 ? { kind: "blessing", element: el, minRarity: "epic" } : { kind: "relic" };
+    // Hub currencies: rare Ember doors and (once a run) a bottle of Grave Wine.
+    if (this.roomNo + 1 >= 3 && this.wineDoors < 1 && Math.random() < 0.06) {
+      this.wineDoors++;
+      return { kind: "wine" };
+    }
+    if (this.roomNo + 1 >= 2 && Math.random() < 0.09) return { kind: "embers", amount: 5 + ((Math.random() * 4) | 0) };
     const owned = this.loadout.owned().length > 0;
     for (let i = 0; i < 10; i++) {
       const x = Math.random();
@@ -1050,8 +1486,10 @@ export class Game {
       }
       if (L.has("judgement_bolt") && ++this.boltHits % 5 === 0) this.skyBolt(t, 40, "judgement");
     }
-    const at = h.at ?? v1.set(t.pos.x, t.chest + t.air, t.pos.z).clone();
     const shieldOf = () => (t as { shield?: number }).shield ?? 0;
+    if (this.meta.keepsake === "anvil_shard" && t instanceof Enemy && (t.elite || shieldOf() > 0)) dmg *= 1.25;
+    if (this.meta.exec && t.hp < t.maxHp * 0.3) dmg *= 1.15;
+    const at = h.at ?? v1.set(t.pos.x, t.chest + t.air, t.pos.z).clone();
     const hp0 = t.hp;
     const sh0 = shieldOf();
     const wasFrozen = t.frozen();
@@ -1244,6 +1682,13 @@ export class Game {
     const at = v1.set(t.pos.x, t.chest + t.air, t.pos.z).clone();
     this.fx.bleed(at, h.dir.x, h.dir.z, t.isBoss ? 6 : 2.5, 1.6);
     const souls = (t instanceof Enemy ? DEFS[t.kind].souls : 220) * SOUL_MUL[this.style.rank];
+    if (t.isBoss) {
+      const final = !!this.boss?.final;
+      this.gainEmbers(final ? 20 : 10);
+      this.note(final ? "cerberus" : "butcher");
+      if (final) this.note(`cerb:${this.player.w.id}`);
+      if (this.meta.stubborn) this.heal(0.4);
+    }
     this.souls += souls;
     this.style.add(h.kind === "execute" ? "execution" : "kill", h.kind === "execute" ? 120 : 30);
     if (this.mods.killHeal && this.mods.heal > 0) this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.mods.killHeal * this.mods.heal);
@@ -1272,6 +1717,7 @@ export class Game {
   }
 
   onDefiance(at: THREE.Vector3) {
+    this.defianceUsed = true;
     this.audio.defiance();
     this.slowmo(0.2, 1.1);
     this.hud.toast("DEATH DEFIED", "#ffd84a");
@@ -1293,6 +1739,7 @@ export class Game {
     this.fx.ring(at, 0.3, 3, new THREE.Color(1.6, 1.3, 0.6), 0.35);
     this.slowmo(0.15, 0.55);
     this.style.add("parry", 90);
+    this.bump("parry");
     this.player.wrath = Math.min(100, this.player.wrath + 12 * this.mods.wrathGain);
     this.hud.toast("PERFECT PARRY", "#ffd84a");
     this.shake(0.25);
@@ -1479,6 +1926,7 @@ export class Game {
 
   /** Let a body drop off the platform; it burns up in the lava far below. */
   dropIntoVoid(obj: THREE.Object3D, vel: THREE.Vector3) {
+    this.bump("void");
     this.fallers.push({ obj, vel: new THREE.Vector3(vel.x * 0.6, 3, vel.z * 0.6), spin: new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 6) });
   }
 
@@ -1498,8 +1946,8 @@ export class Game {
     });
   }
 
-  onPlayerDeath() {
-    this.bankSouls();
+  onPlayerDeath(cause?: string) {
+    this.endRun("dead", cause ?? this.lastHurtBy);
     this.slowmo(0.2, 2);
     this.hud.letterbox(true);
     this.phase = "over";
@@ -1882,7 +2330,7 @@ export class Game {
     this.zoom += (this.zoomTarget - this.zoom) * (1 - Math.exp(-real * 5));
     const aspect = this.camera.aspect;
     const base = (this.boss?.final ? 23 : this.boss ? 20 : 16.5) * (aspect < 1 ? 1.55 : aspect < 1.3 ? 1.2 : 1);
-    const dist = base * this.zoom * (this.phase === "doors" && !this.shop ? 1.22 : 1);
+    const dist = base * this.zoom * (this.phase === "doors" && !this.shop ? 1.22 : this.stable ? 1.08 : 1);
     this.camPos.copy(this.focus).addScaledVector(CAM_DIR, dist);
     this.trauma = Math.max(0, this.trauma - real * 1.6);
     const s = this.trauma * this.trauma * 0.7;
@@ -1973,10 +2421,18 @@ export class Game {
       const kind = rewardIcon(this.plan.reward);
       place(this.orb.position.clone().setY(3.1), { icon: kind, title: rewardLabel(this.plan.reward), sub: "Walk over to claim", color: ICON_COLOR[kind] }, true);
     }
+    if (this.stable)
+      for (const s of this.stable.spots) {
+        const near = Math.hypot(this.player.pos.x - s.pos.x, this.player.pos.z - s.pos.z) < s.r + 3;
+        const t = s.id === "altar" ? { title: "Altar of Scars", sub: `${this.save.embers} Embers`, color: "#ff3a3a", icon: "embers" as IconKind } : { title: NPC[s.id].name, sub: NPC[s.id].title, color: { krag: "#ff9a4a", seer: "#c9b6ff", steed: "#7fd8ff" }[s.id], icon: (s.id === "steed" ? "souls" : s.id === "seer" ? "shadow" : "anvil") as IconKind };
+        if (near || s.id === "steed") place(s.pos.clone().setY(s.head), { ...t, sub: near ? `${t.sub} · Press F` : t.sub }, false);
+      }
     if (this.armoury)
       for (const r of this.armoury.racks) {
         const w = WEAPONS[r.id];
         const on = r.id === this.player.w.id;
+        // In the stable only the rack you stand at is labelled.
+        if (this.stable && Math.hypot(this.player.pos.x - r.pos.x, this.player.pos.z - r.pos.z) > 2.2) continue;
         place(r.pos.clone().setY(3.2), { icon: "move", title: w.name, sub: on ? `Equipped · ${this.player.asp.name.replace("Aspect of the ", "")}` : "Press F", color: on ? "#ffd24a" : `#${w.trail.clone().multiplyScalar(2.2).getHexString()}` }, false);
       }
     if (this.shop)
@@ -1998,6 +2454,10 @@ export class Game {
   /** One frame (exposed for testing: hidden panes throttle requestAnimationFrame). */
   frame(real: number) {
     if (this.paused) {
+      if (this.stable) {
+        this.stable.update(real, this.fx, this.player.pos);
+        this.fx.update(real);
+      }
       if (this.lord) {
         this.lord.update(real, this.fx);
         this.fx.update(real);
@@ -2035,6 +2495,7 @@ export class Game {
     this.shop?.update(dt, this.fx);
     this.fountain?.update(dt, this.fx);
     this.armoury?.update(dt, this.player.w.id);
+    this.stable?.update(dt, this.fx, this.player.pos);
     this.updateLord(real);
     this.fx.update(dt);
     this.updateFlow(dt, real);

@@ -391,3 +391,79 @@ button { font: inherit; color: inherit; }
   .ros-screen { justify-content: flex-start; padding-top: 18px; }
   .ros-screen.ros-title, .ros-screen.ros-intro { justify-content: center; }
 }
+
+/* ── Forsaken Stable ─────────────────────────────────────────────────── */
+.ros-hud.hub .rs-wrath, .ros-hud.hub .rs-row, .ros-hud.hub .rs-boons, .ros-hud.hub .rs-rank, .ros-hud.hub .rs-coins { display: none; }
+.rs-embers, .rs-wine { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.rs-embers { color: #ffb08a; text-shadow: 0 0 10px rgba(255, 80, 30, 0.6); }
+.rs-embers i { width: 10px; height: 14px; background: linear-gradient(180deg, #ffe0a0, #ff4a1a 60%, #7a0a04); clip-path: polygon(50% 0, 100% 55%, 50% 100%, 0 55%); box-shadow: 0 0 8px #ff4a1a; }
+.rs-wine { color: #e0b0ff; text-shadow: 0 0 10px rgba(190, 60, 255, 0.55); }
+.rs-wine i { width: 9px; height: 15px; border-radius: 3px 3px 4px 4px; background: linear-gradient(180deg, #2a0a30 0 25%, #c03aff 25%); box-shadow: 0 0 8px #c03aff; }
+
+.ros-hub { background: radial-gradient(ellipse at 50% 40%, rgba(18, 4, 9, 0.9), rgba(5, 2, 3, 0.97) 70%); justify-content: flex-start; padding-top: 5vh; }
+.ros-hub h2 { font-size: clamp(26px, 4.4vw, 44px); }
+.ros-hub .ros-sub b { display: block; margin-top: 8px; }
+.ros-embers { color: #ffb08a; font-size: 18px; font-family: var(--title); letter-spacing: 0.08em; }
+.ros-hub.talk { justify-content: flex-end; padding-bottom: 6vh; background: linear-gradient(180deg, rgba(5, 2, 3, 0) 0%, rgba(5, 2, 3, 0) 45%, rgba(5, 2, 3, 0.85) 75%, rgba(5, 2, 3, 0.95) 100%); cursor: pointer; }
+.ros-dialog {
+  width: min(760px, 100%); text-align: left; padding: 18px 24px 20px; cursor: default;
+  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); border-left: 4px solid var(--c);
+  background: linear-gradient(180deg, rgba(16, 6, 8, 0.92), rgba(8, 3, 4, 0.96));
+  box-shadow: 0 0 40px color-mix(in srgb, var(--c) 18%, transparent);
+  animation: ros-cardin 0.3s ease both;
+}
+.ros-dialog-name { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.ros-dialog-name b { font-family: var(--title); font-size: 20px; letter-spacing: 0.08em; color: var(--c); text-transform: uppercase; }
+.ros-dialog-name small { color: var(--muted); font-style: italic; }
+.ros-dialog p { margin: 0; font-size: 17px; line-height: 1.6; color: #f1e2da; animation: ros-fadein 0.4s ease both; }
+@keyframes ros-fadein { from { opacity: 0; transform: translateY(4px); } }
+.ros-dialog-more { display: block; text-align: right; color: var(--c); animation: ros-bob 1s ease-in-out infinite; }
+@keyframes ros-bob { 50% { transform: translateY(3px); } }
+.ros-dialog-opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.ros-dialog-opts .ros-btn { font-size: 12px; padding: 9px 20px; }
+.ros-dialog-opts .ros-btn:disabled { cursor: default; opacity: 0.4; }
+
+.ros-mini {
+  padding: 5px 12px; border: 1px solid rgba(255, 120, 80, 0.45); background: rgba(60, 10, 12, 0.7); cursor: pointer;
+  font-family: var(--hud); font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: #ffd8c8;
+}
+.ros-mini:hover { border-color: var(--ember); box-shadow: 0 0 12px rgba(255, 60, 20, 0.35); }
+.ros-mini.poor { opacity: 0.5; }
+.ros-mini.gold { border-color: #ffd24a; color: #ffe08a; background: rgba(70, 50, 8, 0.6); }
+.ros-active { font-family: var(--hud); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #ffd24a; }
+
+.ros-altar { display: grid; gap: 8px; width: min(980px, 100%); margin-bottom: 18px; }
+.ros-altar-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ros-scar { text-align: left; padding: 10px 14px; border: 1px solid rgba(255, 60, 50, 0.2); background: rgba(14, 4, 5, 0.85); opacity: 0.72; transition: opacity 0.15s; }
+.ros-scar.owned { opacity: 0.85; }
+.ros-scar.on.owned { opacity: 1; border-color: #ff3a3a; box-shadow: 0 0 18px rgba(255, 30, 30, 0.25) inset; }
+.ros-scar-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ros-scar-head b { font-family: var(--title); font-size: 15px; color: #ffd0c4; letter-spacing: 0.04em; }
+.ros-pips { display: flex; gap: 3px; }
+.ros-pips i { width: 8px; height: 8px; transform: rotate(45deg); border: 1px solid #ff5a4a; }
+.ros-pips i.on { background: #ff3a2a; box-shadow: 0 0 6px #ff3a2a; }
+.ros-scar p { margin: 4px 0 8px; font-size: 13px; color: #cdb7ae; line-height: 1.4; }
+.ros-scar-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.ros-prophecies { display: grid; gap: 6px; width: min(820px, 100%); margin-bottom: 18px; }
+.ros-proph { display: flex; justify-content: space-between; gap: 14px; text-align: left; padding: 9px 14px; border: 1px solid rgba(180, 150, 255, 0.18); background: rgba(10, 6, 14, 0.85); }
+.ros-proph b { display: block; font-size: 15px; color: #e8e0ff; }
+.ros-proph em { display: block; font-size: 12.5px; color: #9d90b8; margin-top: 2px; }
+.ros-proph.done { border-color: #c9b6ff; box-shadow: 0 0 16px rgba(170, 130, 255, 0.2) inset; }
+.ros-proph.claimed { opacity: 0.5; }
+.ros-proph-side { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 4px; white-space: nowrap; }
+.ros-proph-side small { color: #ffb08a; font-size: 12px; }
+.ros-prog { font-family: var(--hud); font-size: 13px; color: #8a809a; }
+
+.ros-keepsakes { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; width: min(900px, 100%); margin-bottom: 18px; }
+.ros-ks { text-align: left; padding: 12px 14px; cursor: pointer; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); background: linear-gradient(180deg, color-mix(in srgb, var(--c) 10%, #0d0606), #0a0405); }
+.ros-ks b { display: block; font-family: var(--title); color: var(--c); font-size: 15px; }
+.ros-ks p { margin: 4px 0 0; font-size: 13px; color: #d4c2ba; line-height: 1.4; }
+.ros-ks.locked { opacity: 0.4; cursor: default; filter: grayscale(0.8); }
+.ros-ks.on { border-color: var(--c); box-shadow: 0 0 22px color-mix(in srgb, var(--c) 35%, transparent); }
+.ros-ks:not(.locked):hover { transform: translateY(-2px); }
+.ros-reroll { margin-top: 16px; font-size: 12px; padding: 8px 20px; }
+@media (max-width: 700px) {
+  .ros-altar-row { grid-template-columns: 1fr; }
+  .ros-dialog p { font-size: 15px; }
+}

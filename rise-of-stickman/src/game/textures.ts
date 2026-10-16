@@ -341,7 +341,7 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
 }
 
 // ── Reward icons ──────────────────────────────────────────────────────────────────────
-export type IconKind = "fire" | "ice" | "lightning" | "shadow" | "blood" | "plague" | "relic" | "health" | "souls" | "move" | "boss" | "coins" | "ember" | "shop" | "fountain" | "anvil";
+export type IconKind = "fire" | "ice" | "lightning" | "shadow" | "blood" | "plague" | "relic" | "health" | "souls" | "move" | "boss" | "coins" | "ember" | "shop" | "fountain" | "anvil" | "embers" | "wine";
 
 export const ICON_COLOR: Record<IconKind, string> = {
   fire: "#ff6a1a",
@@ -360,6 +360,8 @@ export const ICON_COLOR: Record<IconKind, string> = {
   ember: "#ff7a3a",
   shop: "#ffd24a",
   fountain: "#ff2a4a",
+  embers: "#ff4a1a",
+  wine: "#c03aff",
 };
 
 const iconCache = new Map<IconKind, HTMLCanvasElement>();
@@ -499,6 +501,54 @@ export function iconCanvas(kind: IconKind) {
       g.bezierCurveTo(18, -50, 18, -32, 0, -22);
       g.bezierCurveTo(-18, -32, -16, -50, 0, -70);
       g.fill();
+      break;
+    }
+    case "embers": {
+      // A cluster of three ember shards, the Altar's currency.
+      for (const [x, y, s] of [
+        [0, -14, 1],
+        [-38, 22, 0.7],
+        [36, 26, 0.75],
+      ]) {
+        g.beginPath();
+        g.moveTo(x, y - 58 * s);
+        g.lineTo(x + 26 * s, y);
+        g.lineTo(x, y + 40 * s);
+        g.lineTo(x - 26 * s, y);
+        g.closePath();
+        g.fill();
+      }
+      g.fillStyle = col;
+      g.beginPath();
+      g.moveTo(0, -56);
+      g.lineTo(9, -14);
+      g.lineTo(0, 14);
+      g.lineTo(-9, -14);
+      g.closePath();
+      g.fill();
+      break;
+    }
+    case "wine": {
+      // A sealed bottle of Grave Wine.
+      g.beginPath();
+      g.moveTo(-12, -72);
+      g.lineTo(12, -72);
+      g.lineTo(12, -34);
+      g.quadraticCurveTo(44, -18, 44, 16);
+      g.lineTo(44, 58);
+      g.quadraticCurveTo(44, 70, 30, 70);
+      g.lineTo(-30, 70);
+      g.quadraticCurveTo(-44, 70, -44, 58);
+      g.lineTo(-44, 16);
+      g.quadraticCurveTo(-44, -18, -12, -34);
+      g.closePath();
+      g.fill();
+      g.fillStyle = col;
+      g.beginPath();
+      g.arc(0, 26, 20, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = "#000";
+      g.fillRect(-15, -80, 30, 14);
       break;
     }
     case "relic":

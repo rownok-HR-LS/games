@@ -1074,13 +1074,14 @@ export class Player {
     }
     if (this.state === "execute" || this.state === "wrathIntro") return "dodged";
     if (this.iframes > 0) {
-      if (this.state === "dash" || this.time - this.lastDashEnd < 0.12) {
+      if (this.state === "dash" || this.time - this.lastDashEnd < 0.12 * g.mods.dodgeWindow) {
         if (o.kind !== "projectile" || Math.random() < 0.5) g.perfectDodge(this.pos);
         return "perfect";
       }
       return "dodged";
     }
     // Take the hit.
+    g.noteHurt(src);
     const taken = dmg * g.mods.taken * g.dmgScale * (this.inWrath ? 0.6 : 1) * (this.state === "slash" && g.loadout.anvil.has("iron_wall") ? 0.7 : 1) * (g.loadout.has("blood_aux") && this.hp < this.maxHp * 0.3 ? 0.8 : 1);
     this.hp -= taken;
     g.onPlayerHurt(taken);
@@ -1163,7 +1164,7 @@ export class Player {
     this.fallY = -20;
     this.enter("dead");
     g.toast("LOST TO THE ABYSS", "#c06bff");
-    g.onPlayerDeath();
+    g.onPlayerDeath("the abyss");
   }
 
   private onParry(src: Target | null, srcPos: THREE.Vector3) {

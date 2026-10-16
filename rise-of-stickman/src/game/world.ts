@@ -114,13 +114,20 @@ export class Room {
   readonly boss: boolean;
   readonly traps: SpikePlate[] = [];
 
-  constructor(seed: number, opts: { boss?: boolean; doors: number; traps?: number; small?: boolean }) {
+  /** The Forsaken Stable: no doors, no traps, and the edges hold you. */
+  readonly hub: boolean;
+
+  constructor(
+    seed: number,
+    opts: { boss?: boolean; doors: number; traps?: number; small?: boolean; hub?: boolean; size?: [number, number]; avoid?: { x: number; z: number; r: number }[] },
+  ) {
     shared ??= buildShared();
     const S = shared;
     const r = rng(seed * 7919 + 13);
     this.boss = !!opts.boss;
-    this.hx = this.boss ? 15 : opts.small ? 8 : 9 + Math.floor(r() * 4);
-    this.hz = this.boss ? 15 : opts.small ? 8 : 9 + Math.floor(r() * 4);
+    this.hub = !!opts.hub;
+    this.hx = opts.size ? opts.size[0] : this.boss ? 15 : opts.small ? 8 : 9 + Math.floor(r() * 4);
+    this.hz = opts.size ? opts.size[1] : this.boss ? 15 : opts.small ? 8 : 9 + Math.floor(r() * 4);
     const { hx, hz } = this;
     const g = this.group;
 
@@ -218,14 +225,18 @@ export class Room {
 
     // ── Doors (placed first so decor avoids them) ──
     const doorSpots: { pos: THREE.Vector3; normal: THREE.Vector3 }[] = [];
-    if (opts.doors === 1) doorSpots.push({ pos: new THREE.Vector3(-hx * 0.15, 0, -hz), normal: new THREE.Vector3(0, 0, 1) });
+    if (this.hub) {
+      /* the stable has no doors: Ashmane rides out */
+    } else if (opts.doors === 1) doorSpots.push({ pos: new THREE.Vector3(-hx * 0.15, 0, -hz), normal: new THREE.Vector3(0, 0, 1) });
     else {
       doorSpots.push({ pos: new THREE.Vector3(-hx * 0.35, 0, -hz), normal: new THREE.Vector3(0, 0, 1) });
       doorSpots.push({ pos: new THREE.Vector3(-hx, 0, -hz * 0.3), normal: new THREE.Vector3(1, 0, 0) });
       if (opts.doors >= 3) doorSpots.push({ pos: new THREE.Vector3(hx * 0.45, 0, -hz), normal: new THREE.Vector3(0, 0, 1) });
     }
     for (const d of doorSpots) this.doors.push(this.buildDoor(d.pos, d.normal));
-    const nearDoor = (x: number, z: number, m: number) => this.doors.some((d) => Math.hypot(d.pos.x - x, d.pos.z - z) < m);
+    const avoid = opts.avoid ?? [];
+    const nearDoor = (x: number, z: number, m: number) =>
+      this.doors.some((d) => Math.hypot(d.pos.x - x, d.pos.z - z) < m) || avoid.some((a) => Math.hypot(a.x - x, a.z - z) < a.r + m * 0.5);
 
     // ── Wall decor: buttresses, glowing gothic windows, torn banners ──
     const winMat = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: new THREE.Color(1.6, 0.18, 0.05), emissiveIntensity: 1 });
@@ -276,7 +287,7 @@ export class Room {
     pm.map!.needsUpdate = true;
     const pillarSpots: [number, number][] = [];
     if (this.boss) pillarSpots.push([-9, -9], [9, -9], [-9, 9], [9, 9]);
-    else {
+    else if (!this.hub) {
       const n = Math.floor(r() * 4);
       for (let i = 0; i < n * 3 && pillarSpots.length < n; i++) {
         const x = (r() * 2 - 1) * (hx - 3);
@@ -341,7 +352,7 @@ export class Room {
     sigil.position.y = 0.01;
     sigil.rotation.y = r() * Math.PI;
     sigil.receiveShadow = true;
-    g.add(sigil);
+    if (!this.hub) g.add(sigil);
     // Dark stains: old blood and soot.
     for (let i = 0; i < (this.boss ? 14 : 8); i++) {
       const x = (r() * 2 - 1) * (hx - 1);
@@ -392,11 +403,11 @@ export class Room {
 
     // ── Bones and skulls ──
     const boneGeo = new THREE.CapsuleGeometry(0.028, 0.32, 2, 6);
-    const nBones = this.boss ? 70 : 34;
+    const nBones = this.hub ? 0 : this.boss ? 70 : 34;
     const bones = new THREE.InstancedMesh(boneGeo, S.bone, nBones);
     const dmy = new THREE.Object3D();
     const piles: [number, number][] = [];
-    for (let i = 0; i < (this.boss ? 8 : 4); i++) {
+    for (let i = 0; i < (this.hub ? 0 : this.boss ? 8 : 4); i++) {
       for (let k = 0; k < 10; k++) {
         const x = (r() * 2 - 1) * (hx - 1.5);
         const z = (r() * 2 - 1) * (hz - 1.5);
@@ -417,7 +428,7 @@ export class Room {
     const skullGeo = new THREE.SphereGeometry(0.11, 12, 10);
     const eyeGeo = new THREE.SphereGeometry(0.03, 6, 6);
     const eyeMat = new THREE.MeshBasicMaterial({ color: 0x050202 });
-    for (let i = 0; i < Math.min(piles.length * 3, 14); i++) {
+    for (let i = 0; i < Math.min(piles.length * 3, 14) && piles.length; i++) {
       const [px, pz] = piles[i % piles.length];
       const sk = new THREE.Group();
       const s = new THREE.Mesh(skullGeo, S.bone);
@@ -435,7 +446,9 @@ export class Room {
     }
 
     // ── Braziers ──
-    const bspots: THREE.Vector3[] = this.boss
+    const bspots: THREE.Vector3[] = this.hub
+      ? []
+      : this.boss
       ? [new THREE.Vector3(-hx + 2, 0, -hz + 2), new THREE.Vector3(hx - 3, 0, -hz + 2), new THREE.Vector3(-hx + 2, 0, hz - 3)]
       : [new THREE.Vector3(-hx + 1.6, 0, -hz + 1.6), r() < 0.5 ? new THREE.Vector3(hx - 2, 0, -hz + 1.6) : new THREE.Vector3(-hx + 1.6, 0, hz - 2)];
     for (const p of bspots) {
@@ -703,6 +716,7 @@ export class Room {
 
   /** Past the lip: nothing underfoot. */
   overVoid(p: THREE.Vector3, margin = 0) {
+    if (this.hub) return false;
     return p.x > this.edgeX - margin || p.z > this.edgeZ - margin;
   }
 
@@ -713,6 +727,7 @@ export class Room {
 
   /** Keep a body on the platform. With `allowFall` the open edges don't hold it back (dashes, big knockback). */
   resolve(p: THREE.Vector3, r: number, allowFall = false) {
+    if (this.hub) allowFall = false;
     p.x = Math.max(-this.hx + r, allowFall ? p.x : Math.min(this.edgeX - r, p.x));
     p.z = Math.max(-this.hz + r, allowFall ? p.z : Math.min(this.edgeZ - r, p.z));
     for (const c of this.pillars) {

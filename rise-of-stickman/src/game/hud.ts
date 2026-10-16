@@ -50,6 +50,8 @@ export class Hud {
   private special: HTMLElement;
   private souls: HTMLElement;
   private coins: HTMLElement;
+  private embers: HTMLElement;
+  private wine: HTMLElement;
   private defiance: HTMLElement;
   private promptEl: HTMLElement;
   private sayEl: HTMLElement;
@@ -100,6 +102,8 @@ export class Hud {
     const tr = el("div", "rs-tr", root);
     this.souls = el("div", "rs-souls", tr);
     this.coins = el("div", "rs-coins", tr);
+    this.embers = el("div", "rs-embers", tr);
+    this.wine = el("div", "rs-wine", tr);
     this.defiance = el("div", "rs-defiance", tl);
     this.roomLbl = el("div", "rs-roomlbl", tr);
 
@@ -167,7 +171,13 @@ export class Hud {
       this.special.style.setProperty("--cd", `${(1 - sp) * 360}deg`);
       this.special.classList.toggle("ready", sp <= 0);
     });
-    this.set("souls", Math.round(g.souls), () => (this.souls.innerHTML = `<i></i>${Math.round(g.souls)}`));
+    const souls = Math.round(g.inHub ? g.save.souls : g.souls);
+    this.set("souls", souls, () => (this.souls.innerHTML = `<i></i>${souls}`));
+    this.set("embers", g.save.embers, () => (this.embers.innerHTML = `<i></i>${g.save.embers}`));
+    this.set("wine", g.save.wine, () => {
+      this.wine.innerHTML = `<i></i>${g.save.wine}`;
+      this.wine.style.display = g.save.wine > 0 ? "" : "none";
+    });
     this.set("coins", g.coins, () => (this.coins.innerHTML = `<i></i>${g.coins}`));
     this.set("def", p.defiance * 10 + p.defianceMax, () => {
       this.defiance.innerHTML = Array.from({ length: p.defianceMax }, (_, i) => `<i class="${i < p.defiance ? "on" : ""}" title="Death Defiance"></i>`).join("");
@@ -208,6 +218,11 @@ export class Hud {
       void this.rankBox.offsetWidth;
       this.rankBox.classList.add("pop");
     }
+  }
+
+  /** In the Forsaken Stable the combat widgets step aside. */
+  mode(hub: boolean) {
+    this.root.classList.toggle("hub", hub);
   }
 
   room(label: string) {

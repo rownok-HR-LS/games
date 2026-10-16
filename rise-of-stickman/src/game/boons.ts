@@ -128,7 +128,9 @@ export type Reward =
   | { kind: "health" }
   | { kind: "coins"; amount: number }
   | { kind: "ember" }
-  | { kind: "anvil" };
+  | { kind: "anvil" }
+  | { kind: "embers"; amount: number }
+  | { kind: "wine" };
 
 export type DoorPlan = { type: RoomType; reward: Reward | null };
 
@@ -163,6 +165,10 @@ export function rewardLabel(r: Reward) {
       return "Ember Heart";
     case "anvil":
       return "Soul Anvil";
+    case "embers":
+      return `${r.amount} Embers`;
+    case "wine":
+      return "Grave Wine";
   }
 }
 
@@ -173,9 +179,10 @@ export function doorIcon(d: DoorPlan): IconKind {
   return d.reward ? rewardIcon(d.reward) : "souls";
 }
 
-export function rollRarity(min: Rarity = "common"): Rarity {
+/** `favour` raises the Rare chance (Altar of Scars: Lord's Favour). */
+export function rollRarity(min: Rarity = "common", favour = 0): Rarity {
   const x = Math.random();
-  let r: Rarity = x < 0.06 ? "epic" : x < 0.3 ? "rare" : "common";
+  let r: Rarity = x < 0.06 ? "epic" : x < 0.3 + favour ? "rare" : "common";
   if (RARITY_ORDER.indexOf(r) < RARITY_ORDER.indexOf(min)) r = min;
   return r;
 }
@@ -195,6 +202,8 @@ export type Mods = {
   parryWindow: number;
   dashCharges: number;
   killHeal: number;
+  /** Perfect-dodge window multiplier. */
+  dodgeWindow: number;
 };
 
 export class Loadout {
@@ -239,7 +248,7 @@ export class Loadout {
   }
 
   mods(): Mods {
-    const m: Mods = { dmg: 1, taken: 1, heal: 1, maxHp: 1, style: 1, wrathGain: 1, wrathDur: 7, parryWindow: 1, dashCharges: 2, killHeal: 0 };
+    const m: Mods = { dmg: 1, taken: 1, heal: 1, maxHp: 1, style: 1, wrathGain: 1, wrathDur: 7, parryWindow: 1, dashCharges: 2, killHeal: 0, dodgeWindow: 1 };
     for (const r of this.relics) {
       if (r.id === "pact") {
         m.dmg *= 1.4;
