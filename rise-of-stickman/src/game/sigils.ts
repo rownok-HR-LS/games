@@ -91,6 +91,23 @@ const ART: Record<string, string> = {
   long_chain: `<path d="M-20 16 L12 -12" stroke-dasharray="3 2.5" stroke-width="2.6"/>${at(14, -14, `<circle r="6"/><circle r="2" fill="currentColor"/>`, "sg-spin")}`,
   spinning_saw: `<g class="sg-spin-fast"><circle r="11"/>${[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `<path d="M${Math.cos((i * Math.PI) / 4) * 11} ${Math.sin((i * Math.PI) / 4) * 11} l${Math.cos((i * Math.PI) / 4 + 0.6) * 5} ${Math.sin((i * Math.PI) / 4 + 0.6) * 5}"/>`).join("")}</g>`,
   stunning_lash: `<path d="M-20 14 q14 -4 30 -22" stroke-dasharray="3 2.5" stroke-width="2.6"/>${at(12, -10, `<circle r="5"/>`)}${at(0, -16, SPARK, "sg-twinkle")}${at(8, -20, SPARK, "sg-twinkle", "animation-delay:-.4s")}${at(18, -16, SPARK, "sg-twinkle", "animation-delay:-.8s")}`,
+  // ── Altar of Scars ──
+  alt_defiance: `${at(0, 4, SKULL)}${at(0, -14, `<ellipse rx="11" ry="3.2"/>`, "sg-bob")}${at(0, 4, `<circle r="15" stroke-opacity=".5"/>`, "sg-ripple")}`,
+  alt_stubborn: `${at(0, 2, `${HEART}<path d="M-1 -7 l3 5 l-3 4 l3 6" stroke-width="1.8"/>`, "sg-pulse")}${at(-14, -12, `<path d="M0 -4 v8 M-4 0 h8" stroke-width="2.4"/>`, "sg-twinkle")}`,
+  alt_hide: `${at(0, 0, `<path d="M0 -17 L14 -11 Q14 6 0 17 Q-14 6 -14 -11z" fill="currentColor" fill-opacity=".2"/><path d="M0 -10 L8 -6.5 Q8 4 0 10 Q-8 4 -8 -6.5z"/>`, "sg-pulse")}`,
+  alt_blood_debt: `${at(0, 2, `<g transform="scale(1.5)">${DROP}</g>`)}${at(13, -10, `<path d="M0 -4 v8 M-4 0 h8" stroke-width="2.4"/>`, "sg-twinkle")}${at(-8, 16, DROP, "sg-drip", "", 0.5)}`,
+  alt_strength: `${at(0, 0, `<path d="M-9 8 v-12 a3 3 0 0 1 6 0 v-3 a3 3 0 0 1 6 0 v2 a3 3 0 0 1 6 0 v10 q0 9 -9 9 h-2 q-7 0 -7 -6z" fill="currentColor" fill-opacity=".25"/><path d="M-9 1 h18"/>`, "sg-pulse")}${at(-15, -12, SPARK, "sg-twinkle")}${at(15, -8, SPARK, "sg-twinkle", "animation-delay:-.7s")}`,
+  alt_exec: `${at(0, 6, SKULL)}<g class="sg-chop">${at(0, -4, `<path d="M-16 -6 L16 -14" stroke-width="3"/><path d="M10 -16 L14 -9" stroke-width="2"/>`)}</g>`,
+  alt_stride: `<g class="sg-slide-s">${CHEV}</g>${at(-18, 0, `<path d="M0 -8 v16" stroke-opacity=".5"/>`, "sg-clone")}`,
+  alt_ghost: `${at(6, 2, STICK)}${at(-8, 2, STICK, "sg-clone")}${at(16, -14, `<circle r="3"/>`, "sg-ripple")}`,
+  alt_pockets: `${at(-6, 6, `<ellipse rx="9" ry="3.5" fill="currentColor" fill-opacity=".25"/>`)}${at(-6, 1, `<ellipse rx="9" ry="3.5" fill="currentColor" fill-opacity=".25"/>`)}${at(6, -6, `<circle r="8" fill="currentColor" fill-opacity=".25"/><path d="M0 -4 v8"/>`, "sg-bob")}`,
+  alt_haggler: `<path d="M0 -16 v28 M-14 -10 h28"/>${at(-12, -2, `<path d="M-6 0 q6 7 12 0z" fill="currentColor" fill-opacity=".3"/>`, "sg-bob")}${at(12, -2, `<path d="M-6 0 q6 7 12 0z" fill="currentColor" fill-opacity=".3"/>`, "sg-bob", "animation-delay:-1.2s")}<path d="M-8 14 h16"/>`,
+  alt_favour: `${at(0, 4, `<path d="M-14 8 L-14 -6 L-7 2 L0 -10 L7 2 L14 -6 L14 8z" fill="currentColor" fill-opacity=".25"/>`)}${at(0, -14, SPARK, "sg-twinkle")}${at(-12, -10, SPARK, "sg-twinkle", "animation-delay:-.5s")}${at(12, -10, SPARK, "sg-twinkle", "animation-delay:-1s")}`,
+  alt_ember_heart: `${at(0, 4, HEART, "sg-pulse")}${at(0, -2, FLAME, "sg-flicker", "", 1.2)}`,
+  alt_kindle: `${at(0, 12, `<path d="M0 0 c-9 -6 -8 -17 0 -25 c2 7 10 10 9 18 c0 5 -4 7 -9 7z" fill="currentColor" fill-opacity=".4"/>`, "sg-flicker")}${at(-12, 8, FLAME, "sg-flicker", "animation-delay:-.4s", 0.7)}${at(12, 10, FLAME, "sg-flicker", "animation-delay:-.2s", 0.6)}`,
+  alt_burning: `<rect x="-15" y="8" width="30" height="6" rx="1"/><rect x="-14" y="9" width="14" height="4" fill="currentColor" stroke="none"/>${at(-6, 4, FLAME, "sg-flicker")}${at(4, 2, FLAME, "sg-flicker", "animation-delay:-.4s", 1.2)}`,
+  alt_chance: `${at(0, 0, `<path d="M-12 -4 a13 13 0 0 1 23 -3"/><path d="M12 -12 L11 -7 L6 -8"/><path d="M12 4 a13 13 0 0 1 -23 3"/><path d="M-12 12 L-11 7 L-6 8"/>`, "sg-spin-slow")}${at(0, 0, `<rect x="-5" y="-5" width="10" height="10" rx="2" fill="currentColor" fill-opacity=".3"/>`, "sg-pulse")}`,
+  alt_harvest: `<g class="sg-orbit">${at(0, -16, `<circle r="3.4" fill="currentColor"/>`)}${at(14, 8, `<circle r="2.6" fill="currentColor"/>`)}${at(-14, 8, `<circle r="3" fill="currentColor"/>`)}</g>${at(0, 2, `<path d="M-8 -2 q8 -12 16 0 q-2 10 -8 12 q-6 -2 -8 -12z" fill="currentColor" fill-opacity=".25"/>`, "sg-pulse")}`,
   // ── Cursed relics ──
   pact: `<path d="M-11 -14 h22 q0 14 -11 16 q-11 -2 -11 -16z M0 2 v10 M-7 14 h14"/>${at(0, -6, `<path d="M0 0 q-3 4 0 6 q3 -2 0 -6z" fill="currentColor"/>`, "sg-drip")}`,
   halo: `<g class="sg-bob"><ellipse rx="15" ry="5" cy="-6"/><path d="M-3 -11 l2 4 l-2 3" stroke-width="1.8"/></g>${at(0, 10, `<path d="M-6 0 h12" stroke-opacity=".5"/>`, "sg-pulse")}`,
@@ -120,7 +137,7 @@ const ART: Record<string, string> = {
 
 /** Inline SVG emblem for a blessing / relic / move id (also "lvl:<id>"), or null if there is none. */
 export function sigilSvg(id: string): string | null {
-  const key = id.startsWith("lvl:") || id.startsWith("asp:") || id.startsWith("anv:") ? id.slice(4) : id;
+  const key = id.startsWith("alt:") ? `alt_${id.slice(4)}` : id.startsWith("lvl:") || id.startsWith("asp:") || id.startsWith("anv:") ? id.slice(4) : id;
   const art = ART[key];
   if (!art) return null;
   return `<svg class="ros-sigil" viewBox="-32 -32 64 64" aria-hidden="true">

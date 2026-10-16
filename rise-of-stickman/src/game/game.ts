@@ -56,7 +56,7 @@ export const FLOOR_ROOMS = 12;
 export const MINIBOSS_ROOM = 6;
 export type Card = { id: string; name: string; text: string; icon: IconKind; color: string; tag: string; note?: string; rarity?: string };
 export type HubOption = { id: string; label: string; disabled?: boolean };
-export type AltarSideRow = { name: string; text: string; rank: number; max: number; next: number | null };
+export type AltarSideRow = { sid: string; name: string; text: string; nextText: string | null; rank: number; max: number; next: number | null };
 export type HubView =
   | { kind: "talk"; name: string; title: string; lines: string[]; options: HubOption[]; color: string }
   | { kind: "altar"; embers: number; rows: { id: string; side: 0 | 1; a: AltarSideRow; b: AltarSideRow }[] }
@@ -1117,7 +1117,8 @@ export class Game {
       const slot = ALTAR.find((x) => x.id === id)!;
       const d = i ? slot.b : slot.a;
       const rank = altarRanks(s, id)[i];
-      return { name: d.name, text: d.text(rank || 1), rank, max: d.costs.length, next: rank < d.costs.length ? d.costs[rank] : null };
+      const more = rank < d.costs.length;
+      return { sid: d.id, name: d.name, text: d.text(rank || 1), nextText: rank && more ? d.text(rank + 1) : null, rank, max: d.costs.length, next: more ? d.costs[rank] : null };
     };
     return { kind: "altar", embers: s.embers, rows: ALTAR.map((a) => ({ id: a.id, side: s.altarSide[a.id] ?? 0, a: side(a.id, 0), b: side(a.id, 1) })) };
   }

@@ -292,6 +292,108 @@ export default function RiseOfStickman() {
   );
 }
 
+const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
+
+/** The Altar of Scars: eight scars carved in a grid, and the chosen scar's two sides in detail. */
+function AltarPanel({ view, act }: { view: Extract<HubView, { kind: "altar" }>; act: (id: string) => void }) {
+  const [sel, setSel] = useState(0);
+  const row = view.rows[Math.min(sel, view.rows.length - 1)];
+  const carved = view.rows.reduce((n, r) => n + r.a.rank + r.b.rank, 0);
+  const total = view.rows.reduce((n, r) => n + r.a.max + r.b.max, 0);
+  return (
+    <div className="ros-screen ros-hub ros-altarscreen">
+      <div className="ros-altar-top">
+        <div>
+          <h2>Altar of Scars</h2>
+          <p>Every scar you carve stays with you through death. Each scar has two sides, and only one side burns at a time. Switching sides is free.</p>
+        </div>
+        <div className="ros-ember-pill">
+          <i />
+          <b>{view.embers}</b>
+          <span>Embers</span>
+        </div>
+      </div>
+      <div className="ros-altar2">
+        <div className="ros-scargrid">
+          {view.rows.map((r, i) => {
+            const act0 = r.side ? r.b : r.a;
+            const lit = act0.rank > 0;
+            const ranks = r.a.rank + r.b.rank;
+            return (
+              <button key={r.id} className={`ros-scartile${i === sel ? " sel" : ""}${lit ? " lit" : ""}`} onClick={() => setSel(i)}>
+                <span className="ros-scartile-no">{ROMAN[i]}</span>
+                <span className="ros-scartile-sig" dangerouslySetInnerHTML={{ __html: sigilSvg(`alt:${act0.sid}`) ?? "" }} />
+                <span className="ros-scartile-txt">
+                  <b>{act0.name}</b>
+                  <small>
+                    <em className={r.side === 0 ? "on" : ""}>{r.a.name}</em> / <em className={r.side === 1 ? "on" : ""}>{r.b.name}</em>
+                  </small>
+                </span>
+                <span className="ros-scartile-rank">{ranks ? `${ranks}/${r.a.max + r.b.max}` : "—"}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="ros-scardetail" key={row.id}>
+          <div className="ros-scardetail-head">
+            <span>Scar {ROMAN[sel]}</span>
+            <small>{carved} of {total} carved</small>
+          </div>
+          {([row.a, row.b] as const).map((d, i) => {
+            const on = row.side === i && d.rank > 0;
+            const ab = i ? "b" : "a";
+            const poor = d.next !== null && view.embers < d.next;
+            return (
+              <div key={ab} className={`ros-side${on ? " on" : ""}${d.rank ? " owned" : ""}`}>
+                <span className="ros-side-sig" dangerouslySetInnerHTML={{ __html: sigilSvg(`alt:${d.sid}`) ?? "" }} />
+                <div className="ros-side-body">
+                  <div className="ros-side-head">
+                    <b>{d.name}</b>
+                    <span className="ros-pips">
+                      {Array.from({ length: d.max }, (_, k) => (
+                        <i key={k} className={k < d.rank ? "on" : ""} />
+                      ))}
+                    </span>
+                  </div>
+                  <p>{d.text}</p>
+                  {d.nextText && <p className="ros-side-next">Next rank: {d.nextText}</p>}
+                  <div className="ros-side-btns">
+                    {d.next !== null ? (
+                      <button className={`ros-carve${poor ? " poor" : ""}`} onClick={() => act(`altar:buy${ab}:${row.id}`)}>
+                        <span>{d.rank ? "Deepen the scar" : "Carve the scar"}</span>
+                        <b>
+                          <i />
+                          {d.next}
+                        </b>
+                      </button>
+                    ) : (
+                      <span className="ros-maxed">Fully carved</span>
+                    )}
+                    {on ? (
+                      <span className="ros-burning">Burning</span>
+                    ) : (
+                      d.rank > 0 && (
+                        <button className="ros-mini" onClick={() => act(`altar:use${ab}:${row.id}`)}>
+                          Burn this side
+                        </button>
+                      )
+                    )}
+                  </div>
+                  {poor && <small className="ros-need">Need {d.next! - view.embers} more Embers</small>}
+                </div>
+                {i === 0 && <span className="ros-side-or">or</span>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <button className="ros-btn ghost" onClick={() => act("close")}>
+        Close
+      </button>
+    </div>
+  );
+}
+
 /** Panels in the Forsaken Stable: NPC dialogue, the Altar of Scars, prophecies, keepsakes. */
 function HubPanel({ view, act }: { view: HubView; act: (id: string) => void }) {
   const [step, setStep] = useState(0);
@@ -326,53 +428,7 @@ function HubPanel({ view, act }: { view: HubView; act: (id: string) => void }) {
       Close
     </button>
   );
-  if (view.kind === "altar")
-    return (
-      <div className="ros-screen ros-hub">
-        <h2>Altar of Scars</h2>
-        <p className="ros-sub">
-          Spend Embers on lasting scars. Each one has two sides. Only one side works at a time, and you can swap sides for free.
-          <b className="ros-embers">{view.embers} Embers</b>
-        </p>
-        <div className="ros-altar">
-          {view.rows.map((r) => (
-            <div className="ros-altar-row" key={r.id}>
-              {([r.a, r.b] as const).map((d, i) => {
-                const on = r.side === i;
-                const ab = i ? "b" : "a";
-                return (
-                  <div key={ab} className={`ros-scar${on ? " on" : ""}${d.rank ? " owned" : ""}`}>
-                    <div className="ros-scar-head">
-                      <b>{d.name}</b>
-                      <span className="ros-pips">
-                        {Array.from({ length: d.max }, (_, k) => (
-                          <i key={k} className={k < d.rank ? "on" : ""} />
-                        ))}
-                      </span>
-                    </div>
-                    <p>{d.text}</p>
-                    <div className="ros-scar-btns">
-                      {d.next !== null && (
-                        <button className={`ros-mini${view.embers >= d.next ? "" : " poor"}`} onClick={() => act(`altar:buy${ab}:${r.id}`)}>
-                          {d.rank ? "Rank up" : "Unlock"} · {d.next}
-                        </button>
-                      )}
-                      {!on && d.rank > 0 && (
-                        <button className="ros-mini" onClick={() => act(`altar:use${ab}:${r.id}`)}>
-                          Use this side
-                        </button>
-                      )}
-                      {on && d.rank > 0 && <span className="ros-active">Active</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-        {close}
-      </div>
-    );
+  if (view.kind === "altar") return <AltarPanel view={view} act={act} />;
   if (view.kind === "prophecies")
     return (
       <div className="ros-screen ros-hub">

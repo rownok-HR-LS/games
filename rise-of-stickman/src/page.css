@@ -432,18 +432,9 @@ button { font: inherit; color: inherit; }
 .ros-mini.gold { border-color: #ffd24a; color: #ffe08a; background: rgba(70, 50, 8, 0.6); }
 .ros-active { font-family: var(--hud); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #ffd24a; }
 
-.ros-altar { display: grid; gap: 8px; width: min(980px, 100%); margin-bottom: 18px; }
-.ros-altar-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.ros-scar { text-align: left; padding: 10px 14px; border: 1px solid rgba(255, 60, 50, 0.2); background: rgba(14, 4, 5, 0.85); opacity: 0.72; transition: opacity 0.15s; }
-.ros-scar.owned { opacity: 0.85; }
-.ros-scar.on.owned { opacity: 1; border-color: #ff3a3a; box-shadow: 0 0 18px rgba(255, 30, 30, 0.25) inset; }
-.ros-scar-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.ros-scar-head b { font-family: var(--title); font-size: 15px; color: #ffd0c4; letter-spacing: 0.04em; }
 .ros-pips { display: flex; gap: 3px; }
 .ros-pips i { width: 8px; height: 8px; transform: rotate(45deg); border: 1px solid #ff5a4a; }
 .ros-pips i.on { background: #ff3a2a; box-shadow: 0 0 6px #ff3a2a; }
-.ros-scar p { margin: 4px 0 8px; font-size: 13px; color: #cdb7ae; line-height: 1.4; }
-.ros-scar-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 .ros-prophecies { display: grid; gap: 6px; width: min(820px, 100%); margin-bottom: 18px; }
 .ros-proph { display: flex; justify-content: space-between; gap: 14px; text-align: left; padding: 9px 14px; border: 1px solid rgba(180, 150, 255, 0.18); background: rgba(10, 6, 14, 0.85); }
@@ -464,6 +455,66 @@ button { font: inherit; color: inherit; }
 .ros-ks:not(.locked):hover { transform: translateY(-2px); }
 .ros-reroll { margin-top: 16px; font-size: 12px; padding: 8px 20px; }
 @media (max-width: 700px) {
-  .ros-altar-row { grid-template-columns: 1fr; }
   .ros-dialog p { font-size: 15px; }
+}
+
+/* Altar of Scars */
+.ros-altarscreen { justify-content: center; padding-top: 24px; background: radial-gradient(ellipse at 30% 0%, rgba(110, 8, 10, 0.35), transparent 55%), radial-gradient(ellipse at 50% 60%, rgba(20, 3, 6, 0.95), rgba(4, 1, 2, 0.98) 75%); }
+.ros-altar-top { width: min(1060px, 100%); display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; text-align: left; margin-bottom: 18px; }
+.ros-altar-top h2 { font-size: clamp(26px, 4vw, 42px); text-align: left; }
+.ros-altar-top p { margin: 6px 0 0; max-width: 560px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.ros-ember-pill { display: flex; align-items: center; gap: 10px; padding: 10px 18px; border: 1px solid rgba(255, 90, 40, 0.5); background: linear-gradient(180deg, rgba(70, 14, 6, 0.8), rgba(20, 4, 3, 0.9)); box-shadow: 0 0 26px rgba(255, 60, 20, 0.2); clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
+.ros-ember-pill i, .ros-carve b i { display: inline-block; width: 12px; height: 18px; background: linear-gradient(180deg, #ffe0a0, #ff4a1a 60%, #7a0a04); clip-path: polygon(50% 0, 100% 55%, 50% 100%, 0 55%); filter: drop-shadow(0 0 6px #ff4a1a); }
+.ros-ember-pill b { font-family: var(--title); font-size: 28px; color: #ffd0b0; line-height: 1; }
+.ros-ember-pill span { font-family: var(--hud); letter-spacing: 0.2em; text-transform: uppercase; font-size: 12px; color: #c88a70; }
+.ros-altar2 { width: min(1060px, 100%); display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; margin-bottom: 16px; align-items: start; }
+.ros-scargrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ros-scartile { position: relative; display: grid; grid-template-columns: 54px 1fr auto; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; text-align: left; cursor: pointer; color: #b8a39a;
+  border: 1px solid rgba(255, 70, 50, 0.14); background: linear-gradient(135deg, rgba(30, 10, 10, 0.9), rgba(10, 4, 5, 0.95)); transition: border-color .15s, transform .15s, box-shadow .15s; }
+.ros-scartile:hover { border-color: rgba(255, 80, 60, 0.45); transform: translateY(-1px); }
+.ros-scartile.sel { border-color: #ff4a3a; box-shadow: 0 0 0 1px #ff4a3a inset, 0 0 24px rgba(255, 40, 30, 0.25); }
+.ros-scartile-no { position: absolute; top: 4px; right: 8px; font-family: var(--title); font-size: 10px; color: rgba(255, 120, 100, 0.4); letter-spacing: .1em; }
+.ros-scartile-sig { width: 54px; height: 54px; color: #a8746a; filter: grayscale(.35); opacity: .8; }
+.ros-scartile.lit .ros-scartile-sig { color: #ff4a3a; filter: none; opacity: 1; }
+.ros-scartile-txt b { display: block; font-family: var(--title); font-size: 14.5px; color: #e8cfc6; }
+.ros-scartile.lit .ros-scartile-txt b { color: #ffe0d6; }
+.ros-scartile-txt small { display: block; margin-top: 2px; font-size: 11px; color: #7d6460; }
+.ros-scartile-txt em { font-style: normal; }
+.ros-scartile.lit .ros-scartile-txt em.on { color: #ff7a6a; }
+.ros-scartile-rank { font-family: var(--hud); font-size: 13px; color: #8a6a64; align-self: end; }
+.ros-scartile.lit .ros-scartile-rank { color: #ffb4a0; }
+.ros-scardetail { padding: 14px; border: 1px solid rgba(255, 70, 50, 0.3); background: linear-gradient(180deg, rgba(34, 8, 9, 0.95), rgba(12, 3, 4, 0.97)); animation: ros-fadein .25s ease both; }
+.ros-scardetail-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; text-align: left; }
+.ros-scardetail-head span { font-family: var(--title); font-size: 13px; letter-spacing: .3em; text-transform: uppercase; color: #ff6a5a; }
+.ros-scardetail-head small { font-family: var(--hud); color: #8a6a64; letter-spacing: .08em; }
+.ros-side { position: relative; display: grid; grid-template-columns: 76px 1fr; gap: 12px; padding: 12px; text-align: left; border: 1px solid rgba(255, 70, 50, 0.16); background: rgba(8, 2, 3, 0.7); }
+.ros-side + .ros-side { margin-top: 22px; }
+.ros-side.on { border-color: #ff4a3a; background: linear-gradient(90deg, rgba(90, 10, 10, 0.45), rgba(14, 3, 4, 0.8)); box-shadow: 0 0 26px rgba(255, 40, 30, 0.18) inset; }
+.ros-side-sig { width: 76px; height: 76px; color: #b07a70; filter: grayscale(.3); opacity: .85; }
+.ros-side.owned .ros-side-sig { color: #ff5a4a; filter: none; opacity: 1; }
+.ros-side-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ros-side-head b { font-family: var(--title); font-size: 17px; color: #ffe0d6; }
+.ros-side-body p { margin: 4px 0 0; font-size: 13.5px; color: #d6c0b8; line-height: 1.45; }
+.ros-side-body p.ros-side-next { color: #ff9a80; font-size: 12.5px; }
+.ros-side-btns { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.ros-carve { display: inline-flex; align-items: center; gap: 12px; padding: 7px 8px 7px 14px; cursor: pointer; border: 1px solid #ff5a3a; color: #ffe8de;
+  background: linear-gradient(180deg, #a8160f, #5a0608); font-family: var(--title); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; transition: box-shadow .15s, transform .15s; }
+.ros-carve:hover { box-shadow: 0 0 20px rgba(255, 60, 30, 0.5); transform: translateY(-1px); }
+.ros-carve b { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; background: rgba(0, 0, 0, 0.35); font-family: var(--hud); font-size: 15px; letter-spacing: 0; }
+.ros-carve b i { width: 8px; height: 12px; }
+.ros-carve.poor { background: linear-gradient(180deg, #3a1412, #1e0808); border-color: rgba(255, 90, 60, 0.35); color: #a08078; }
+.ros-need { display: block; margin-top: 5px; color: #8a6a64; font-size: 11.5px; }
+.ros-maxed { font-family: var(--hud); letter-spacing: .14em; text-transform: uppercase; font-size: 12px; color: #ffb4a0; }
+.ros-burning { font-family: var(--hud); letter-spacing: .2em; text-transform: uppercase; font-size: 12px; color: #ffd24a; padding-left: 16px; position: relative; }
+.ros-burning::before { content: ""; position: absolute; left: 0; top: 50%; width: 9px; height: 9px; margin-top: -5px; border-radius: 50%; background: #ff6a2a; box-shadow: 0 0 8px #ff4a1a; animation: sg-pulse 1.4s ease-in-out infinite; }
+.ros-side-or { position: absolute; left: 50%; bottom: -19px; transform: translateX(-50%); font-family: var(--title); font-size: 11px; letter-spacing: .3em; text-transform: uppercase; color: #8a5a52; }
+.ros-pips { display: flex; gap: 4px; }
+.ros-pips i { width: 8px; height: 8px; transform: rotate(45deg); border: 1px solid rgba(255, 90, 74, 0.6); }
+.ros-pips i.on { background: #ff3a2a; border-color: #ff6a5a; box-shadow: 0 0 6px #ff3a2a; }
+@media (max-width: 820px) {
+  .ros-altar2 { grid-template-columns: 1fr; }
+  .ros-altar-top { flex-direction: column; align-items: flex-start; }
+}
+@media (max-width: 480px) {
+  .ros-scargrid { grid-template-columns: 1fr; }
 }
