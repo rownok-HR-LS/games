@@ -332,6 +332,10 @@ export class Music {
   private guitarL: GainNode;
   private guitarR: GainNode;
   private leadBus: GainNode;
+  /** Lead, harpsichord and synth layer: swells with the player's style rank. */
+  private layer: GainNode;
+  /** Recent beat times (quarter notes), for visuals that pulse to the music. */
+  private beats: number[] = [];
   private noise: AudioBuffer;
   private track: Track | null = null;
   private bars: Bar[] = [];
@@ -350,6 +354,9 @@ export class Music {
     this.out = ctx.createGain();
     this.out.gain.value = 0;
     this.out.connect(this.enabledGain);
+    this.layer = ctx.createGain();
+    this.layer.gain.value = 0.55;
+    this.layer.connect(this.out);
 
     // Hall reverb from a generated impulse response.
     this.reverb = ctx.createConvolver();
@@ -404,7 +411,7 @@ export class Music {
     panner.pan.value = pan;
     const level$ = ctx.createGain();
     level$.gain.value = level;
-    input.connect(shaper).connect(hp).connect(scoop).connect(cab).connect(cab2).connect(panner).connect(level$).connect(this.out);
+    input.connect(shaper).connect(hp).connect(scoop).connect(cab).connect(cab2).connect(panner).connect(level$).connect(lead ? this.layer : this.out);
     if (lead) {
       const delay = ctx.createDelay(1);
       delay.delayTime.value = 0.33;
@@ -413,10 +420,24 @@ export class Music {
       const send = ctx.createGain();
       send.gain.value = 0.35;
       level$.connect(delay).connect(fb).connect(delay);
-      delay.connect(send).connect(this.out);
+      delay.connect(send).connect(this.layer);
       level$.connect(this.reverb);
     }
     return input;
+  }
+
+  /** 0..1: how hard the music hits. Low keeps the riffs; high brings in leads and arpeggios. */
+  setIntensity(x: number) {
+    this.layer.gain.setTargetAtTime(0.2 + 0.8 * Math.max(0, Math.min(1, x)), this.ctx.currentTime, 0.4);
+  }
+
+  /** 1 right on a beat, decaying to 0 before the next one. */
+  beat() {
+    if (!this.track || this.paused) return 0;
+    const now = this.ctx.currentTime;
+    let last = -1;
+    for (const b of this.beats) if (b <= now && b > last) last = b;
+    return last < 0 ? 0 : Math.exp(-(now - last) * 7);
   }
 
   setEnabled(on: boolean) {
@@ -490,6 +511,10 @@ export class Music {
 
   // ── One 16th-note step ──────────────────────────────────────────────────────────────
   private playStep(track: Track, bar: Bar, i: number, t: number, step: number) {
+    if (i % 4 === 0) {
+      this.beats.push(t);
+      if (this.beats.length > 8) this.beats.shift();
+    }
     const sectionStart = this.isSectionStart();
     const sectionEnd = this.isSectionEnd();
     const root = track.root;
@@ -548,7 +573,7 @@ export class Music {
         const note = root + (track.leadOctave ?? 24) + off;
         const dur = step * len;
         if (track.lead === "guitar") this.leadGuitar(note, t, dur);
-        else if (track.lead === "organ") this.organ(note, t, dur, 0.05);
+        else if (track.lead === "organ") this.organ(note, t, dur, 0.05, this.layer);
         else this.synth(note, t, dur);
       }
     }
@@ -689,10 +714,10 @@ export class Music {
   }
 
   /** Church organ: drawbar-style sine partials. */
-  private organ(note: number, t: number, dur: number, level: number) {
+  private organ(note: number, t: number, dur: number, level: number, dest: AudioNode = this.out) {
     const ctx = this.ctx;
     const g = ctx.createGain();
-    g.connect(this.out);
+    g.connect(dest);
     g.connect(this.reverb);
     this.env(g, t, level, 0.06, dur, 0.35);
     const f = midi(note);
@@ -742,7 +767,7 @@ export class Music {
     hp.type = "highpass";
     hp.frequency.value = 350;
     hp.connect(g);
-    g.connect(this.out);
+    g.connect(this.layer);
     g.connect(this.reverb);
     g.gain.setValueAtTime(0.045, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
@@ -778,7 +803,7 @@ export class Music {
     lp.frequency.setValueAtTime(3200, t);
     lp.frequency.exponentialRampToValueAtTime(500, t + Math.max(0.08, dur));
     lp.connect(g);
-    g.connect(this.out);
+    g.connect(this.layer);
     g.connect(this.reverb);
     this.env(g, t, 0.05, 0.004, dur * 0.8, 0.08);
     this.osc("square", midi(note), t, t + dur + 0.1, lp, -6);

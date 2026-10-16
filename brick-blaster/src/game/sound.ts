@@ -10,6 +10,9 @@ export class Sound {
   private music: Music | null = null;
   private cue: MusicCue = { kind: "off" };
   private musicPaused = false;
+  private musicBus: GainNode | null = null;
+  private musicVol = 0.8;
+  private sfxVol = 0.9;
   muted = false;
   musicOn = true;
 
@@ -28,10 +31,12 @@ export class Sound {
       comp.release.value = 0.2;
       comp.connect(this.ctx.destination);
       this.sfx = this.ctx.createGain();
+      this.sfx.gain.value = this.sfxVol;
       this.sfx.connect(comp);
       const musicBus = this.ctx.createGain();
-      musicBus.gain.value = 0.55;
+      musicBus.gain.value = 0.69 * this.musicVol;
       musicBus.connect(comp);
+      this.musicBus = musicBus;
       this.music = new Music(this.ctx, musicBus);
       this.music.setEnabled(this.musicOn);
       this.applyCue();
@@ -57,6 +62,26 @@ export class Sound {
     if (!this.music) return;
     const c = this.cue;
     this.music.play(c.kind === "title" ? TITLE : c.kind === "level" ? TRACKS[c.level % TRACKS.length] : null);
+  }
+
+  /** Settings sliders, 0..1. */
+  setVolumes(music: number, sfx: number) {
+    this.musicVol = music;
+    this.sfxVol = sfx;
+    if (this.ctx && this.musicBus && this.sfx) {
+      this.musicBus.gain.setTargetAtTime(0.69 * music, this.ctx.currentTime, 0.05);
+      this.sfx.gain.setTargetAtTime(sfx, this.ctx.currentTime, 0.05);
+    }
+  }
+
+  /** Style rank 0..1 drives how hard the soundtrack hits. */
+  setIntensity(x: number) {
+    this.music?.setIntensity(x);
+  }
+
+  /** 0..1 pulse on every beat of the current track (for visuals). */
+  beat() {
+    return this.music?.beat() ?? 0;
   }
 
   setMusicOn(on: boolean) {
@@ -133,6 +158,37 @@ export class Sound {
   }
   lose() {
     this.tone(400, 0.6, "sawtooth", 0.06, 80);
+  }
+  /** Style rank up: a rising power chord stab. */
+  rankUp(rank: number) {
+    const base = 196 * 2 ** (rank / 6);
+    this.tone(base, 0.25, "sawtooth", 0.05, base * 1.5);
+    this.tone(base * 1.5, 0.3, "square", 0.035);
+  }
+  bossHit() {
+    this.tone(110, 0.22, "sawtooth", 0.09, 55);
+    this.noise(0.18, 0.25);
+  }
+  bossRoar() {
+    this.tone(90, 1.1, "sawtooth", 0.1, 40);
+    this.tone(134, 1.1, "sawtooth", 0.07, 60);
+    this.noise(0.9, 0.3);
+  }
+  bossShoot() {
+    this.tone(240, 0.25, "sawtooth", 0.05, 90);
+  }
+  stunned() {
+    this.tone(880, 0.3, "square", 0.05, 220);
+    this.noise(0.25, 0.2);
+  }
+  portal() {
+    this.tone(300, 0.25, "sine", 0.06, 1200);
+  }
+  zap() {
+    this.tone(1600, 0.08, "square", 0.03, 400);
+  }
+  pick() {
+    [392, 523, 659].forEach((f, i) => setTimeout(() => this.tone(f, 0.12, "triangle", 0.06), i * 60));
   }
   level() {
     [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.tone(f, 0.14, "square", 0.05), i * 110));

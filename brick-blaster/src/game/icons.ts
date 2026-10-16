@@ -69,4 +69,19 @@ export const POWER_ICONS: Record<PowerKind, IconLayer[]> = {
     { tone: "soft", d: "M.8 7.6h8.4v1.8H.8zM2.8 11.1h6.6v1.8H2.8zM.8 14.6h8.4v1.8H.8z" },
     { tone: "main", d: ball(16.2, 12, 6) },
   ],
+  // Forked lightning: a big bolt with a smaller one chained to it.
+  lightning: [
+    { tone: "soft", d: "M18.5 5.5l-3.4 6.2h3.1l-1.4 6.3 5-8.2h-3.2l2.2-4.3z" },
+    { tone: "main", d: "M10 1L3 13h5.2L6 23l9.6-14.6H10L13.4 1z" },
+  ],
+  // A huge ball with arrows bursting outward.
+  giant: [
+    { tone: "soft", d: "M1.5 1.5h6l-2.2 2.2 3 3-1.6 1.6-3-3-2.2 2.2zM22.5 1.5v6l-2.2-2.2-3 3-1.6-1.6 3-3-2.2-2.2zM1.5 22.5v-6l2.2 2.2 3-3 1.6 1.6-3 3 2.2 2.2zM22.5 22.5h-6l2.2-2.2-3-3 1.6-1.6 3 3 2.2-2.2z" },
+    { tone: "main", d: ball(12, 12, 6.2) },
+  ],
+  // A die: could be anything.
+  chaos: [
+    { tone: "main", d: "M5.5 2.5h13a3 3 0 0 1 3 3v13a3 3 0 0 1-3 3h-13a3 3 0 0 1-3-3v-13a3 3 0 0 1 3-3z" },
+    { tone: "dark", d: "M7.6 6a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 1 1 0-3.2zM12 10.4a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 1 1 0-3.2zM16.4 14.8a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 1 1 0-3.2zM16.4 6a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 1 1 0-3.2zM7.6 14.8a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 1 1 0-3.2z" },
+  ],
 };
